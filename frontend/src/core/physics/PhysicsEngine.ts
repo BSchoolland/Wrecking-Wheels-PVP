@@ -4,8 +4,9 @@
  */
 
 import Matter from 'matter-js';
-import { PHYSICS_CONSTANTS, WORLD_BOUNDS } from '@shared/constants/physics';
+import { PHYSICS_CONSTANTS } from '@shared/constants/physics';
 import type { PhysicsBodyState, Vector2D } from '@shared/types/GameState';
+import { createMapBoundaries } from '@/game/terrain/MapLoader';
 
 export class PhysicsEngine {
   private engine: Matter.Engine;
@@ -24,31 +25,8 @@ export class PhysicsEngine {
   }
 
   private createBoundaries(): void {
-    const ground = Matter.Bodies.rectangle(
-      WORLD_BOUNDS.WIDTH / 2,
-      WORLD_BOUNDS.HEIGHT + 25,
-      WORLD_BOUNDS.WIDTH,
-      50,
-      { isStatic: true, label: 'ground' }
-    );
-
-    const leftWall = Matter.Bodies.rectangle(
-      -25,
-      WORLD_BOUNDS.HEIGHT / 2,
-      50,
-      WORLD_BOUNDS.HEIGHT,
-      { isStatic: true, label: 'left-wall' }
-    );
-
-    const rightWall = Matter.Bodies.rectangle(
-      WORLD_BOUNDS.WIDTH + 25,
-      WORLD_BOUNDS.HEIGHT / 2,
-      50,
-      WORLD_BOUNDS.HEIGHT,
-      { isStatic: true, label: 'right-wall' }
-    );
-
-    Matter.World.add(this.world, [ground, leftWall, rightWall]);
+    const boundaries = createMapBoundaries();
+    Matter.World.add(this.world, boundaries);
   }
 
   /**

@@ -4,9 +4,10 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { NetworkedGame } from '@/game/NetworkedGame';
+import { ContraptionBuilder } from '@/ui/components/ContraptionBuilder';
 import './App.css';
 
-type View = 'menu' | 'lobby' | 'game';
+type View = 'menu' | 'lobby' | 'game' | 'builder';
 type Role = 'host' | 'client';
 
 function App() {
@@ -76,8 +77,12 @@ function App() {
         <div className="menu">
           <button onClick={createLobby}>Create Lobby (Host)</button>
           <button onClick={joinLobby}>Join Lobby (Client)</button>
-          <button>Contraption Builder (Coming Soon)</button>
+          <button onClick={() => setView('builder')}>Contraption Builder</button>
         </div>
+      )}
+
+      {view === 'builder' && (
+        <ContraptionBuilder onBack={() => setView('menu')} />
       )}
 
       {view === 'lobby' && (
