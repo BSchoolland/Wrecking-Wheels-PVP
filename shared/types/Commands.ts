@@ -4,7 +4,8 @@
 
 export type GameCommand = 
   | DeployCommand
-  | ReadyCommand;
+  | ReadyCommand
+  | SpawnBoxCommand;
 
 export interface DeployCommand {
   type: 'deploy';
@@ -17,6 +18,12 @@ export interface DeployCommand {
 export interface ReadyCommand {
   type: 'ready';
   playerId: string;
+}
+
+export interface SpawnBoxCommand {
+  type: 'spawn-box';
+  playerId: string;
+  position: { x: number; y: number };
 }
 
 /**

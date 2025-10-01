@@ -9,7 +9,9 @@ echo "🎮 Starting Wrecking Wheels PVP..."
 cleanup() {
   echo ""
   echo "🛑 Shutting down..."
-  kill $BACKEND_PID $FRONTEND_PID 2>/dev/null
+  # kill processes on ports 3000 and 3001
+  fuser -k 3000/tcp
+  fuser -k 3001/tcp
   exit
 }
 

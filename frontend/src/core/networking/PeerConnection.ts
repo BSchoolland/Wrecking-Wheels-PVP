@@ -44,13 +44,21 @@ export class PeerConnection {
     this.setupConnectionHandlers();
   }
 
+  private iceCandidateHandler: ((candidate: RTCIceCandidate) => void) | null = null;
+
+  /**
+   * Set ICE candidate handler (called by NetworkManager)
+   */
+  setIceCandidateHandler(handler: (candidate: RTCIceCandidate) => void): void {
+    this.iceCandidateHandler = handler;
+  }
+
   private setupConnectionHandlers(): void {
     if (!this.connection) return;
 
     this.connection.onicecandidate = (event) => {
-      if (event.candidate) {
-        // TODO: Send ICE candidate to peer via signaling server
-        console.log('ICE candidate:', event.candidate);
+      if (event.candidate && this.iceCandidateHandler) {
+        this.iceCandidateHandler(event.candidate);
       }
     };
 

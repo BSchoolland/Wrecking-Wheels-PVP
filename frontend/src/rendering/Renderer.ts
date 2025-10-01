@@ -5,11 +5,12 @@
 
 import type { GameState } from '@shared/types/GameState';
 import { WORLD_BOUNDS } from '@shared/constants/physics';
+import type Matter from 'matter-js';
 
 export class Renderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
-  private camera = { x: 0, y: 0, zoom: 1 };
+  private camera = { x: WORLD_BOUNDS.WIDTH / 2, y: WORLD_BOUNDS.HEIGHT / 2, zoom: 0.8 };
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -127,6 +128,60 @@ export class Renderer {
       );
       this.ctx.textAlign = 'left';
     }
+  }
+
+  /**
+   * Render Matter.js bodies directly (for demo/testing)
+   */
+  renderPhysics(bodies: Matter.Body[]): void {
+    this.clear();
+    this.setupCamera();
+
+    // Render all bodies
+    bodies.forEach(body => {
+      this.ctx.save();
+
+      // Get fill color from render options or use default
+      const fillStyle = (body.render as any)?.fillStyle || 
+        (body.isStatic ? '#555555' : '#3498db');
+
+      this.ctx.fillStyle = fillStyle;
+      this.ctx.strokeStyle = '#000000';
+      this.ctx.lineWidth = 2;
+
+      // Render based on body type
+      if (body.circleRadius) {
+        // Circle
+        this.ctx.beginPath();
+        this.ctx.arc(body.position.x, body.position.y, body.circleRadius, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.stroke();
+        
+        // Draw a line to show rotation
+        this.ctx.beginPath();
+        this.ctx.moveTo(body.position.x, body.position.y);
+        this.ctx.lineTo(
+          body.position.x + Math.cos(body.angle) * body.circleRadius,
+          body.position.y + Math.sin(body.angle) * body.circleRadius
+        );
+        this.ctx.stroke();
+      } else {
+        // Polygon
+        const vertices = body.vertices;
+        this.ctx.beginPath();
+        this.ctx.moveTo(vertices[0].x, vertices[0].y);
+        for (let i = 1; i < vertices.length; i++) {
+          this.ctx.lineTo(vertices[i].x, vertices[i].y);
+        }
+        this.ctx.closePath();
+        this.ctx.fill();
+        this.ctx.stroke();
+      }
+
+      this.ctx.restore();
+    });
+
+    this.resetCamera();
   }
 
   /**
