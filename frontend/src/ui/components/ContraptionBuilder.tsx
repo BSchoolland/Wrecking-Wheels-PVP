@@ -3,8 +3,8 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
+import Matter from 'matter-js';
 import { Contraption, BlockType, createBlock } from '@/game/contraptions';
-import { WheelBlock } from '@/game/contraptions/blocks/WheelBlock';
 import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
 import { Renderer } from '@/rendering/Renderer';
 import { getTestSpawnPosition } from '@/game/terrain/MapLoader';
@@ -100,57 +100,48 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     ctx.lineTo(offsetX, offsetY + 10);
     ctx.stroke();
     
-    // Draw blocks
+    // Create a lightweight Matter.js engine for preview (no gravity, not running)
+    const previewEngine = Matter.Engine.create({ gravity: { x: 0, y: 0, scale: 0 } });
+    const world = previewEngine.world;
+
+    // Build real bodies/constraints with block logic into this world
     contraption.getAllBlocks().forEach(block => {
-      const x = offsetX + block.gridX * gridSize;
-      const y = offsetY + block.gridY * gridSize;
-      
+      const worldX = offsetX + block.gridX * gridSize;
+      const worldY = offsetY + block.gridY * gridSize;
+      const { bodies, constraints } = block.createPhysicsBodies(worldX, worldY);
+      Matter.World.add(world, bodies);
+      if (constraints.length) Matter.World.add(world, constraints as unknown as Matter.Constraint[]);
+    });
+
+    // Render only the contraption bodies (ignore boundaries; none added here)
+    const bodiesToRender = Matter.Composite.allBodies(world);
+    bodiesToRender.forEach(body => {
       ctx.save();
-      
-      if (block.type === 'wheel') {
-        // Draw attachment face
-        ctx.fillStyle = '#795548';
-        ctx.fillRect(
-          x - gridSize / 2,
-          y - gridSize / 2,
-          gridSize,
-          WheelBlock.ATTACHMENT_HEIGHT
-        );
-        
-        // Draw wheel circle
-        ctx.fillStyle = '#555';
+
+      const fill = (body.render as any)?.fillStyle || '#888';
+      const stroke = (body.render as any)?.strokeStyle || '#000';
+      const lineWidth = (body.render as any)?.lineWidth ?? 2;
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = lineWidth;
+
+      if ((body as any).circleRadius) {
+        const r = (body as any).circleRadius as number;
         ctx.beginPath();
-        ctx.arc(
-          x,
-          y + WheelBlock.WHEEL_RADIUS,
-          WheelBlock.WHEEL_RADIUS,
-          0,
-          Math.PI * 2
-        );
+        ctx.arc(body.position.x, body.position.y, r, 0, Math.PI * 2);
         ctx.fill();
-        ctx.strokeStyle = '#000';
-        ctx.lineWidth = 2;
         ctx.stroke();
-      } else {
-        // Draw regular block
-        const color = block.type === 'core' ? '#ff9800' : '#2196f3';
-        ctx.fillStyle = color;
-        ctx.fillRect(
-          x - gridSize / 2,
-          y - gridSize / 2,
-          gridSize,
-          gridSize
-        );
-        ctx.strokeStyle = '#000';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(
-          x - gridSize / 2,
-          y - gridSize / 2,
-          gridSize,
-          gridSize
-        );
+      } else if (body.vertices && body.vertices.length) {
+        ctx.beginPath();
+        ctx.moveTo(body.vertices[0].x, body.vertices[0].y);
+        for (let i = 1; i < body.vertices.length; i++) {
+          ctx.lineTo(body.vertices[i].x, body.vertices[i].y);
+        }
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
       }
-      
+
       ctx.restore();
     });
   };

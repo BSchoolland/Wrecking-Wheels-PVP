@@ -21,7 +21,10 @@ export class SimpleBlock extends BaseBlock {
       worldY,
       BUILDER_CONSTANTS.BLOCK_SIZE,
       BUILDER_CONSTANTS.BLOCK_SIZE,
-      { label: this.id }
+      { 
+        label: this.id,
+        render: { fillStyle: '#2196f3', strokeStyle: '#000', lineWidth: 2 }
+      }
     );
     
     return {

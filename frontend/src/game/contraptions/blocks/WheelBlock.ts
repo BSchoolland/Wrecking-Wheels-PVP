@@ -9,7 +9,7 @@ import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 export class WheelBlock extends BaseBlock {
   // Public so builder UI can reference for rendering
   static readonly WHEEL_RADIUS = 12.5;
-  static readonly ATTACHMENT_HEIGHT = 15;
+  static readonly ATTACHMENT_HEIGHT = 4;
   
   constructor(id: string, gridX: number, gridY: number) {
     super(id, 'wheel', gridX, gridY);
@@ -36,6 +36,7 @@ export class WheelBlock extends BaseBlock {
       WheelBlock.ATTACHMENT_HEIGHT,
       { 
         label: `${this.id}-attach`,
+        render: { fillStyle: '#795548', strokeStyle: '#000', lineWidth: 2 },
         collisionFilter: {
           group
         }
@@ -50,6 +51,7 @@ export class WheelBlock extends BaseBlock {
       { 
         friction: 0.8,
         label: `${this.id}-wheel`,
+        render: { fillStyle: '#555', strokeStyle: '#000', lineWidth: 2 },
         collisionFilter: {
           group
         }
@@ -60,7 +62,7 @@ export class WheelBlock extends BaseBlock {
     const axle = Matter.Constraint.create({
       bodyA: attachmentFace,
       bodyB: wheel,
-      pointA: { x: 0, y: WheelBlock.ATTACHMENT_HEIGHT / 2 },
+      pointA: { x: 0, y: WheelBlock.ATTACHMENT_HEIGHT / 2 + WheelBlock.WHEEL_RADIUS },
       pointB: { x: 0, y: 0 },
       length: 0,
       stiffness: 1,
