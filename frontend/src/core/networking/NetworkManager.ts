@@ -3,7 +3,7 @@
  * Handles WebSocket signaling + WebRTC peer connection
  */
 
-import { PeerConnection, ConnectionRole } from './PeerConnection';
+import { PeerConnection } from './PeerConnection';
 
 export type NetworkRole = 'host' | 'client';
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'failed';
@@ -168,7 +168,7 @@ export class NetworkManager {
   /**
    * Handle WebRTC signaling from peer
    */
-  private async handleWebRTCSignal(fromId: string, signal: any): Promise<void> {
+  private async handleWebRTCSignal(_fromId: string, signal: any): Promise<void> {
     console.log('Received WebRTC signal:', signal.type);
 
     // Create peer connection if we don't have one (client receiving offer)

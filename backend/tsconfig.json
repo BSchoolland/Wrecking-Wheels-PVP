@@ -7,7 +7,6 @@
 
     /* Module resolution */
     "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
     "esModuleInterop": true,

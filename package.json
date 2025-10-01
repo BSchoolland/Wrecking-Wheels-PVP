@@ -1,0 +1,9 @@
+{
+  "name": "wrecking-wheels",
+  "private": true,
+  "workspaces": ["frontend", "backend"],
+  "scripts": {
+    "lint": "npm --workspaces run lint"
+  }
+}
+

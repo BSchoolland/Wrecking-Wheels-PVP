@@ -120,7 +120,7 @@ router.get('/lobby/:lobbyId', (req, res) => {
 /**
  * List all available lobbies
  */
-router.get('/lobbies', (req, res) => {
+router.get('/lobbies', (_req, res) => {
   const availableLobbies = Array.from(lobbies.values())
     .filter(lobby => lobby.status === 'waiting')
     .map(lobby => ({
