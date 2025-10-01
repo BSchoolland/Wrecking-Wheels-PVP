@@ -5,12 +5,12 @@
 
 import type { GameState } from '@shared/types/GameState';
 import { WORLD_BOUNDS } from '@shared/constants/physics';
-import type Matter from 'matter-js';
+import { Camera } from '@/core/Camera';
 
 export class Renderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
-  private camera = { x: WORLD_BOUNDS.WIDTH / 2, y: WORLD_BOUNDS.HEIGHT / 2, zoom: 0.8 };
+  public camera: Camera;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -18,6 +18,7 @@ export class Renderer {
     if (!ctx) throw new Error('Failed to get 2D context');
     this.ctx = ctx;
 
+    this.camera = new Camera({ canvas });
     this.resizeCanvas();
     window.addEventListener('resize', () => this.resizeCanvas());
   }
@@ -25,6 +26,7 @@ export class Renderer {
   private resizeCanvas(): void {
     this.canvas.width = window.innerWidth;
     this.canvas.height = window.innerHeight;
+    this.camera?.onResize();
   }
 
   /**
@@ -55,9 +57,7 @@ export class Renderer {
 
   private setupCamera(): void {
     this.ctx.save();
-    this.ctx.translate(this.canvas.width / 2, this.canvas.height / 2);
-    this.ctx.scale(this.camera.zoom, this.camera.zoom);
-    this.ctx.translate(-this.camera.x, -this.camera.y);
+    this.camera.applyTransform(this.ctx);
   }
 
   private resetCamera(): void {
@@ -133,7 +133,7 @@ export class Renderer {
   /**
    * Render Matter.js bodies directly (for demo/testing)
    */
-  renderPhysics(bodies: Matter.Body[]): void {
+  renderPhysics(bodies: any[]): void {
     this.clear();
     this.setupCamera();
 
@@ -185,16 +185,10 @@ export class Renderer {
   }
 
   /**
-   * Update camera position
-   */
-  setCamera(x: number, y: number, zoom: number = 1): void {
-    this.camera = { x, y, zoom };
-  }
-
-  /**
    * Clean up
    */
   destroy(): void {
     window.removeEventListener('resize', () => this.resizeCanvas());
+    this.camera.destroy();
   }
 }

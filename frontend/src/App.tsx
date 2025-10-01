@@ -105,7 +105,9 @@ function App() {
             <div className="hud-info">
               <span>Lobby: {lobbyId}</span>
               <span>Role: {role}</span>
-              <span>Click to spawn boxes!</span>
+              <span>Left Click: Spawn boxes</span>
+              <span>Right/Middle Click + Drag: Pan camera</span>
+              <span>Mouse Wheel: Zoom in/out</span>
             </div>
             <button className="back-button" onClick={stopGame}>
               Leave Game

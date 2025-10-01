@@ -70,14 +70,16 @@ export class NetworkedGame {
    */
   private setupClickHandler(): void {
     this.canvas.addEventListener('click', (e) => {
-      const rect = this.canvas.getBoundingClientRect();
-      const x = ((e.clientX - rect.left) / rect.width) * 2000; // Map to world coordinates
-      const y = ((e.clientY - rect.top) / rect.height) * 800;
+      // Only spawn on left click (button 0 or undefined)
+      if (e.button !== undefined && e.button !== 0) return;
+
+      // Convert screen coordinates to world coordinates using camera
+      const worldPos = this.renderer.camera.screenToWorld(e.clientX, e.clientY);
       
       const command: SpawnBoxCommand = {
         type: 'spawn-box',
         playerId: this.playerId,
-        position: { x, y },
+        position: worldPos,
       };
 
       // If host, execute command immediately
