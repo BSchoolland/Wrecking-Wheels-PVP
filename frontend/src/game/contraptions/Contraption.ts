@@ -1,9 +1,10 @@
 /**
- * Contraption class - manages blocks and physics assembly
+ * Contraption class - manages blocks and orchestrates physics assembly
  */
 
 import Matter from 'matter-js';
-import { Block, BlockData } from './Block';
+import { BaseBlock } from './blocks/BaseBlock';
+import type { BlockData } from './blocks/BaseBlock';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 
 export interface ContraptionSaveData {
@@ -15,7 +16,7 @@ export interface ContraptionSaveData {
 export class Contraption {
   id: string;
   name: string;
-  blocks: Map<string, Block>; // key: "x,y" grid position
+  blocks: Map<string, BaseBlock>; // key: "x,y" grid position
   
   constructor(id: string = '', name: string = 'Unnamed Contraption') {
     this.id = id || `contraption-${Date.now()}`;
@@ -23,7 +24,7 @@ export class Contraption {
     this.blocks = new Map();
   }
   
-  addBlock(block: Block): boolean {
+  addBlock(block: BaseBlock): boolean {
     const key = `${block.gridX},${block.gridY}`;
     if (this.blocks.has(key)) {
       return false; // Cell already occupied
@@ -32,16 +33,17 @@ export class Contraption {
     return true;
   }
   
-  getBlock(gridX: number, gridY: number): Block | undefined {
+  getBlock(gridX: number, gridY: number): BaseBlock | undefined {
     return this.blocks.get(`${gridX},${gridY}`);
   }
   
-  getAllBlocks(): Block[] {
+  getAllBlocks(): BaseBlock[] {
     return Array.from(this.blocks.values());
   }
   
   /**
    * Build physics bodies and constraints for this contraption
+   * Orchestrates block spawning by calling methods on each block
    */
   buildPhysics(startX: number, startY: number): { bodies: Matter.Body[], constraints: Matter.Constraint[] } {
     const bodies: Matter.Body[] = [];
@@ -50,131 +52,45 @@ export class Contraption {
     
     const gridSize = BUILDER_CONSTANTS.GRID_SIZE;
     
-    // Create bodies for each block
+    // Create bodies for each block by calling block's method
     this.blocks.forEach((block) => {
       const worldX = startX + block.gridX * gridSize;
       const worldY = startY + block.gridY * gridSize;
       
-      if (block.type === 'wheel') {
-        // Wheel is composite: attachment face + circle
-        const attachmentFace = Matter.Bodies.rectangle(
-          worldX,
-          100, //   worldY - gridSize / 2 + BUILDER_CONSTANTS.WHEEL_ATTACHMENT_HEIGHT / 2,
-          BUILDER_CONSTANTS.BLOCK_SIZE,
-          BUILDER_CONSTANTS.WHEEL_ATTACHMENT_HEIGHT,
-          { label: `${block.id}-attach` }
-        );
-        
-        const wheel = Matter.Bodies.circle(
-          worldX,
-          worldY + BUILDER_CONSTANTS.WHEEL_RADIUS,
-          BUILDER_CONSTANTS.WHEEL_RADIUS,
-          { 
-            friction: 0.8,
-            label: `${block.id}-wheel`
-          }
-        );
-        
-        // Connect wheel to attachment face with revolute constraint (free spinning)
-        const axle = Matter.Constraint.create({
-          bodyA: attachmentFace,
-          bodyB: wheel,
-          pointA: { x: 0, y: BUILDER_CONSTANTS.WHEEL_ATTACHMENT_HEIGHT / 2 },
-          pointB: { x: 0, y: 0 },
-          length: 0,
-          stiffness: 1,
-        });
-        
-        bodies.push(attachmentFace, wheel);
-        constraints.push(axle);
-        bodyMap.set(`${block.gridX},${block.gridY}`, attachmentFace); // Use attachment face for connections
-        
-      } else {
-        // Regular block (core or simple)
-        const body = Matter.Bodies.rectangle(
-          worldX,
-          worldY,
-          BUILDER_CONSTANTS.BLOCK_SIZE,
-          BUILDER_CONSTANTS.BLOCK_SIZE,
-          { label: block.id }
-        );
-        bodies.push(body);
-        bodyMap.set(`${block.gridX},${block.gridY}`, body);
-      }
+      const result = block.createPhysicsBodies(worldX, worldY);
+      
+      bodies.push(...result.bodies);
+      constraints.push(...result.constraints);
+      bodyMap.set(`${block.gridX},${block.gridY}`, result.primaryBody);
     });
     
-    // Create constraints between adjacent blocks
+    // Create constraints between adjacent blocks by calling block's method
     this.blocks.forEach((block) => {
       const blockBody = bodyMap.get(`${block.gridX},${block.gridY}`);
       if (!blockBody) return;
       
       const faces = block.getAttachmentFaces();
       
-      // Check each direction for neighbors
+      // Check right neighbor
       if (faces.includes('right')) {
         const neighbor = this.getBlock(block.gridX + 1, block.gridY);
         if (neighbor && neighbor.getAttachmentFaces().includes('left')) {
           const neighborBody = bodyMap.get(`${neighbor.gridX},${neighbor.gridY}`);
           if (neighborBody) {
-            // Two constraints: top corner and bottom corner of the shared edge
-            const halfSize = gridSize / 2;
-            
-            // Top corner constraint
-            constraints.push(Matter.Constraint.create({
-              bodyA: blockBody,
-              bodyB: neighborBody,
-              pointA: { x: halfSize, y: -halfSize },
-              pointB: { x: -halfSize, y: -halfSize },
-              length: 0,
-              stiffness: block.stiffness,
-              damping: BUILDER_CONSTANTS.CONSTRAINT_DAMPING,
-            }));
-            
-            // Bottom corner constraint
-            constraints.push(Matter.Constraint.create({
-              bodyA: blockBody,
-              bodyB: neighborBody,
-              pointA: { x: halfSize, y: halfSize },
-              pointB: { x: -halfSize, y: halfSize },
-              length: 0,
-              stiffness: block.stiffness,
-              damping: BUILDER_CONSTANTS.CONSTRAINT_DAMPING,
-            }));
+            const connectionConstraints = block.createConnectionConstraints('right', blockBody, neighborBody, neighbor);
+            constraints.push(...connectionConstraints);
           }
         }
       }
       
+      // Check bottom neighbor
       if (faces.includes('bottom')) {
         const neighbor = this.getBlock(block.gridX, block.gridY + 1);
         if (neighbor && neighbor.getAttachmentFaces().includes('top')) {
           const neighborBody = bodyMap.get(`${neighbor.gridX},${neighbor.gridY}`);
           if (neighborBody) {
-            const halfSize = gridSize / 2;
-            const neighborHalfY = neighbor.type === 'wheel'
-              ? BUILDER_CONSTANTS.WHEEL_ATTACHMENT_HEIGHT / 2
-              : halfSize;
-            
-            // Left corner constraint
-            constraints.push(Matter.Constraint.create({
-              bodyA: blockBody,
-              bodyB: neighborBody,
-              pointA: { x: -halfSize, y: halfSize },
-              pointB: { x: -halfSize, y: -neighborHalfY },
-              length: 0,
-              stiffness: block.stiffness,
-              damping: BUILDER_CONSTANTS.CONSTRAINT_DAMPING,
-            }));
-            
-            // Right corner constraint
-            constraints.push(Matter.Constraint.create({
-              bodyA: blockBody,
-              bodyB: neighborBody,
-              pointA: { x: halfSize, y: halfSize },
-              pointB: { x: halfSize, y: -neighborHalfY },
-              length: 0,
-              stiffness: block.stiffness,
-              damping: BUILDER_CONSTANTS.CONSTRAINT_DAMPING,
-            }));
+            const connectionConstraints = block.createConnectionConstraints('bottom', blockBody, neighborBody, neighbor);
+            constraints.push(...connectionConstraints);
           }
         }
       }
@@ -197,7 +113,7 @@ export class Contraption {
   /**
    * Load contraption from JSON
    */
-  static load(data: ContraptionSaveData, blockFactory: (data: BlockData) => Block): Contraption {
+  static load(data: ContraptionSaveData, blockFactory: (data: BlockData) => BaseBlock): Contraption {
     const contraption = new Contraption(data.id, data.name);
     data.blocks.forEach(blockData => {
       const block = blockFactory(blockData);
@@ -206,4 +122,3 @@ export class Contraption {
     return contraption;
   }
 }
-

@@ -3,9 +3,8 @@
  */
 
 import { useState, useRef, useEffect } from 'react';
-import Matter from 'matter-js';
-import { Contraption } from '@/game/contraptions/Contraption';
-import { BlockType, createBlock } from '@/game/contraptions/Block';
+import { Contraption, BlockType, createBlock } from '@/game/contraptions';
+import { WheelBlock } from '@/game/contraptions/blocks/WheelBlock';
 import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
 import { Renderer } from '@/rendering/Renderer';
 import { getTestSpawnPosition } from '@/game/terrain/MapLoader';
@@ -115,7 +114,7 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
           x - gridSize / 2,
           y - gridSize / 2,
           gridSize,
-          BUILDER_CONSTANTS.WHEEL_ATTACHMENT_HEIGHT
+          WheelBlock.ATTACHMENT_HEIGHT
         );
         
         // Draw wheel circle
@@ -123,8 +122,8 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
         ctx.beginPath();
         ctx.arc(
           x,
-          y + BUILDER_CONSTANTS.WHEEL_RADIUS,
-          BUILDER_CONSTANTS.WHEEL_RADIUS,
+          y + WheelBlock.WHEEL_RADIUS,
+          WheelBlock.WHEEL_RADIUS,
           0,
           Math.PI * 2
         );
@@ -209,7 +208,7 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     if (blocks.length > 0) {
       const { bodies, constraints } = contraption.buildPhysics(spawnPos.x, spawnPos.y - 100);
       bodies.forEach(body => physicsRef.current?.addBody(body));
-      constraints.forEach(constraint => Matter.Composite.add(physicsRef.current!['world'], constraint));
+      constraints.forEach(constraint => physicsRef.current?.addConstraint(constraint));
       console.log(`[Builder] Added ${bodies.length} bodies and ${constraints.length} constraints`);
     } else {
       console.log('[Builder] No blocks placed; running empty world to show ground');

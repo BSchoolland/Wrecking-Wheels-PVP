@@ -65,6 +65,13 @@ export class PhysicsEngine {
   }
 
   /**
+   * Add a constraint to the physics world
+   */
+  addConstraint(constraint: Matter.Constraint): void {
+    Matter.World.add(this.world, constraint);
+  }
+
+  /**
    * Remove a body from the physics world
    */
   removeBody(body: Matter.Body): void {
