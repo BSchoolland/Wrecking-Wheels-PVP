@@ -51,14 +51,15 @@ export class NetworkedGame {
     }
     
     // Initialize networking
+    const signalingUrl = import.meta.env.VITE_SIGNALING_URL || 'ws://localhost:3001';
     this.network = new NetworkManager({
       role: this.role,
       lobbyId: config.lobbyId,
-      signalingServerUrl: 'ws://localhost:3001',
+      signalingServerUrl: signalingUrl,
       onStateUpdate: (state) => this.handleStateUpdate(state),
       onCommand: (command) => this.handleCommand(command),
-      onConnected: () => console.log('Peer connected!'),
-      onDisconnected: () => console.log('Peer disconnected!'),
+      onConnected: () => { if (import.meta.env.DEV) console.log('Peer connected!'); },
+      onDisconnected: () => { if (import.meta.env.DEV) console.log('Peer disconnected!'); },
     });
 
     // Set up click handler
@@ -126,7 +127,7 @@ export class NetworkedGame {
     this.physics.addBody(box);
     this.bodies.set(boxId, box);
     
-    console.log('Spawned box at', x, y, 'for player', playerId);
+    if (import.meta.env.DEV) console.log('Spawned box at', x, y, 'for player', playerId);
   }
 
   /**
@@ -219,12 +220,7 @@ export class NetworkedGame {
       return Array.from(this.bodies.values());
     }
 
-    // Ensure snapshots are sorted by timestamp/receipt
-    this.snapshotBuffer.sort((a, b) => {
-      const ta = (a.timestamp ?? a._receivedAt);
-      const tb = (b.timestamp ?? b._receivedAt);
-      return ta - tb;
-    });
+    // Buffer is kept ordered on push; no per-frame sort
 
     // Find snapshots bracketing targetTime
     let prev = this.snapshotBuffer[0];

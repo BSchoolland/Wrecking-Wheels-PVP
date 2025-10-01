@@ -51,7 +51,7 @@ export class NetworkManager {
     this.signalingWs = new WebSocket(url);
 
     this.signalingWs.onopen = () => {
-      console.log('Connected to signaling server');
+      if (import.meta.env.DEV) console.log('Connected to signaling server');
     };
 
     this.signalingWs.onmessage = (event) => {
@@ -65,7 +65,7 @@ export class NetworkManager {
     };
 
     this.signalingWs.onclose = () => {
-      console.log('Disconnected from signaling server');
+      if (import.meta.env.DEV) console.log('Disconnected from signaling server');
       this.connectionState = 'disconnected';
     };
   }
@@ -74,13 +74,13 @@ export class NetworkManager {
    * Handle messages from signaling server
    */
   private async handleSignalingMessage(message: any): Promise<void> {
-    console.log('Signaling message:', message.type);
+    if (import.meta.env.DEV) console.log('Signaling message:', message.type);
 
     switch (message.type) {
       case 'connected':
         // Server assigned us an ID
         this.myClientId = message.clientId;
-        console.log('My client ID:', this.myClientId);
+        if (import.meta.env.DEV) console.log('My client ID:', this.myClientId);
         
         // Join the lobby
         this.joinLobby();
@@ -88,7 +88,7 @@ export class NetworkManager {
 
       case 'peer-joined':
         // Another peer joined the lobby
-        console.log('Peer joined:', message.peerId, 'as', message.peerRole);
+        if (import.meta.env.DEV) console.log('Peer joined:', message.peerId, 'as', message.peerRole);
         this.peerId = message.peerId;
         
         // If we're the host, initiate WebRTC connection
@@ -103,7 +103,7 @@ export class NetworkManager {
         break;
 
       case 'peer-left':
-        console.log('Peer left:', message.peerId);
+        if (import.meta.env.DEV) console.log('Peer left:', message.peerId);
         this.peerId = null;
         this.peerConnection?.close();
         this.peerConnection = null;
@@ -129,7 +129,7 @@ export class NetworkManager {
    * Initiate WebRTC connection (called by host)
    */
   private async initiateWebRTC(): Promise<void> {
-    console.log('Initiating WebRTC connection...');
+    if (import.meta.env.DEV) console.log('Initiating WebRTC connection...');
 
     // Create peer connection
     this.peerConnection = new PeerConnection({
@@ -142,12 +142,12 @@ export class NetworkManager {
         }
       },
       onConnect: () => {
-        console.log('WebRTC connected!');
+        if (import.meta.env.DEV) console.log('WebRTC connected!');
         this.connectionState = 'connected';
         this.onConnected();
       },
       onDisconnect: () => {
-        console.log('WebRTC disconnected');
+        if (import.meta.env.DEV) console.log('WebRTC disconnected');
         this.connectionState = 'disconnected';
         this.onDisconnected();
       },
@@ -169,7 +169,7 @@ export class NetworkManager {
    * Handle WebRTC signaling from peer
    */
   private async handleWebRTCSignal(_fromId: string, signal: any): Promise<void> {
-    console.log('Received WebRTC signal:', signal.type);
+    if (import.meta.env.DEV) console.log('Received WebRTC signal:', signal.type);
 
     // Create peer connection if we don't have one (client receiving offer)
     if (!this.peerConnection) {
@@ -183,12 +183,12 @@ export class NetworkManager {
           }
         },
         onConnect: () => {
-          console.log('WebRTC connected!');
+          if (import.meta.env.DEV) console.log('WebRTC connected!');
           this.connectionState = 'connected';
           this.onConnected();
         },
         onDisconnect: () => {
-          console.log('WebRTC disconnected');
+          if (import.meta.env.DEV) console.log('WebRTC disconnected');
           this.connectionState = 'disconnected';
           this.onDisconnected();
         },

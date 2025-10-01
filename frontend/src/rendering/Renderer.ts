@@ -11,6 +11,7 @@ export class Renderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   public camera: Camera;
+  private onResizeHandler = () => this.resizeCanvas();
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -20,7 +21,7 @@ export class Renderer {
 
     this.camera = new Camera({ canvas });
     this.resizeCanvas();
-    window.addEventListener('resize', () => this.resizeCanvas());
+    window.addEventListener('resize', this.onResizeHandler);
   }
 
   private resizeCanvas(): void {
@@ -188,7 +189,7 @@ export class Renderer {
    * Clean up
    */
   destroy(): void {
-    window.removeEventListener('resize', () => this.resizeCanvas());
+    window.removeEventListener('resize', this.onResizeHandler);
     this.camera.destroy();
   }
 }

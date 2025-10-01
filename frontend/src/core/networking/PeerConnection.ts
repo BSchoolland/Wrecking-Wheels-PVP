@@ -64,7 +64,7 @@ export class PeerConnection {
 
     this.connection.onconnectionstatechange = () => {
       const state = this.connection?.connectionState;
-      console.log('Connection state:', state);
+      if (import.meta.env.DEV) console.log('Connection state:', state);
       
       if (state === 'connected') {
         this.onConnect();
@@ -100,11 +100,11 @@ export class PeerConnection {
     if (!this.dataChannel) return;
 
     this.dataChannel.onopen = () => {
-      console.log('Data channel opened');
+      if (import.meta.env.DEV) console.log('Data channel opened');
     };
 
     this.dataChannel.onclose = () => {
-      console.log('Data channel closed');
+      if (import.meta.env.DEV) console.log('Data channel closed');
     };
 
     this.dataChannel.onmessage = (event) => {

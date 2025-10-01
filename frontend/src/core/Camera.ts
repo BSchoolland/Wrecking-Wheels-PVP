@@ -28,6 +28,14 @@ export class Camera {
   private dragStartCamX = 0;
   private dragStartCamY = 0;
 
+  // Bound event handlers for cleanup
+  private onMouseDown?: (e: MouseEvent) => void;
+  private onMouseMove?: (e: MouseEvent) => void;
+  private onMouseUp?: (e: MouseEvent) => void;
+  private onMouseLeave?: (e: MouseEvent) => void;
+  private onContextMenu?: (e: MouseEvent) => void;
+  private onWheel?: (e: WheelEvent) => void;
+
   constructor(config: CameraConfig) {
     this.canvas = config.canvas;
     this.worldWidth = config.worldWidth ?? WORLD_BOUNDS.WIDTH;
@@ -55,7 +63,7 @@ export class Camera {
    */
   private setupControls(): void {
     // Mouse down - start dragging
-    this.canvas.addEventListener('mousedown', (e) => {
+    this.onMouseDown = (e: MouseEvent) => {
       // Only pan with right click or middle click to avoid interfering with game clicks
       if (e.button === 1 || e.button === 2) {
         e.preventDefault();
@@ -66,10 +74,11 @@ export class Camera {
         this.dragStartCamY = this.y;
         this.canvas.style.cursor = 'grabbing';
       }
-    });
+    };
+    this.canvas.addEventListener('mousedown', this.onMouseDown);
 
     // Mouse move - pan camera
-    this.canvas.addEventListener('mousemove', (e) => {
+    this.onMouseMove = (e: MouseEvent) => {
       if (this.isDragging) {
         const dx = e.clientX - this.dragStartX;
         const dy = e.clientY - this.dragStartY;
@@ -83,7 +92,8 @@ export class Camera {
         this.x = Math.max(padding, Math.min(this.worldWidth - padding, this.x));
         this.y = Math.max(padding, Math.min(this.worldHeight - padding, this.y));
       }
-    });
+    };
+    this.canvas.addEventListener('mousemove', this.onMouseMove);
 
     // Mouse up - stop dragging
     const stopDragging = () => {
@@ -92,20 +102,22 @@ export class Camera {
         this.canvas.style.cursor = 'default';
       }
     };
-    this.canvas.addEventListener('mouseup', stopDragging);
-    this.canvas.addEventListener('mouseleave', stopDragging);
+    this.onMouseUp = stopDragging as (e: MouseEvent) => void;
+    this.onMouseLeave = stopDragging as (e: MouseEvent) => void;
+    this.canvas.addEventListener('mouseup', this.onMouseUp);
+    this.canvas.addEventListener('mouseleave', this.onMouseLeave);
 
     // Prevent context menu on right click
-    this.canvas.addEventListener('contextmenu', (e) => {
-      e.preventDefault();
-    });
+    this.onContextMenu = (e: MouseEvent) => { e.preventDefault(); };
+    this.canvas.addEventListener('contextmenu', this.onContextMenu);
 
     // Optional: Mouse wheel zoom
-    this.canvas.addEventListener('wheel', (e) => {
+    this.onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
       this.zoom = Math.max(0.1, Math.min(3, this.zoom * zoomFactor));
-    }, { passive: false });
+    };
+    this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
   }
 
   /**
@@ -162,8 +174,12 @@ export class Camera {
    * Clean up event listeners
    */
   destroy(): void {
-    // Note: Would need to store bound functions to properly remove listeners
-    // For now, this is a placeholder for proper cleanup
+    if (this.onMouseDown) this.canvas.removeEventListener('mousedown', this.onMouseDown);
+    if (this.onMouseMove) this.canvas.removeEventListener('mousemove', this.onMouseMove);
+    if (this.onMouseUp) this.canvas.removeEventListener('mouseup', this.onMouseUp);
+    if (this.onMouseLeave) this.canvas.removeEventListener('mouseleave', this.onMouseLeave);
+    if (this.onContextMenu) this.canvas.removeEventListener('contextmenu', this.onContextMenu);
+    if (this.onWheel) this.canvas.removeEventListener('wheel', this.onWheel as EventListener);
   }
 }
 
