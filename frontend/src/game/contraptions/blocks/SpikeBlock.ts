@@ -11,7 +11,7 @@ export class SpikeBlock extends BaseBlock {
   
   constructor(id: string, gridX: number, gridY: number) {
     super(id, 'spike', gridX, gridY);
-    this.health = 1000; // 10x health
+    this.health = 1000; // 10x health since it's a weapon
     // Spikes hit harder and knock back more by default
     this.damage = 25;
     this.knockback = 0.02;

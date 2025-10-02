@@ -8,6 +8,7 @@ import { PHYSICS_CONSTANTS } from '@shared/constants/physics';
 import type { PhysicsBodyState, Vector2D } from '@shared/types/GameState';
 import { createMapBoundaries } from '@/game/terrain/MapLoader';
 import type { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
+import type { EffectManager } from '@/rendering/EffectManager';
 
 interface ContraptionLike {
   id: string;
@@ -22,6 +23,8 @@ export class PhysicsEngine {
   private constraintsToRemove: Set<Matter.Constraint> = new Set();
   private pendingForces: Map<number, { x: number, y: number }> = new Map();
   private contraptions: Map<string, ContraptionLike> = new Map();
+  private effects: EffectManager | null = null;
+  private activeCollisions: Map<string, number> = new Map(); // Track collision start times
 
   constructor() {
     // Create Matter.js engine
@@ -48,6 +51,10 @@ export class PhysicsEngine {
         const bodyA = pair.bodyA;
         const bodyB = pair.bodyB;
         
+        // Track collision start time
+        const key = this.getCollisionKey(bodyA.id, bodyB.id);
+        this.activeCollisions.set(key, Date.now());
+        
         // Call onCollision callback if body has one
         const onCollisionA = (bodyA as unknown as { onCollision?: (myBody: Matter.Body, otherBody: Matter.Body) => void }).onCollision;
         const onCollisionB = (bodyB as unknown as { onCollision?: (myBody: Matter.Body, otherBody: Matter.Body) => void }).onCollision;
@@ -56,6 +63,40 @@ export class PhysicsEngine {
         if (onCollisionB) onCollisionB(bodyB, bodyA);
       });
     });
+
+    Matter.Events.on(this.engine, 'collisionEnd', (event) => {
+      event.pairs.forEach(pair => {
+        const key = this.getCollisionKey(pair.bodyA.id, pair.bodyB.id);
+        this.activeCollisions.delete(key);
+      });
+    });
+
+    Matter.Events.on(this.engine, 'collisionActive', (event) => {
+      const now = Date.now();
+      event.pairs.forEach(pair => {
+        const key = this.getCollisionKey(pair.bodyA.id, pair.bodyB.id);
+        const startTime = this.activeCollisions.get(key);
+        
+        // If collision has been active for > 250ms, re-trigger damage
+        if (startTime && now - startTime > 250) {
+          const bodyA = pair.bodyA;
+          const bodyB = pair.bodyB;
+          
+          const onCollisionA = (bodyA as unknown as { onCollision?: (myBody: Matter.Body, otherBody: Matter.Body) => void }).onCollision;
+          const onCollisionB = (bodyB as unknown as { onCollision?: (myBody: Matter.Body, otherBody: Matter.Body) => void }).onCollision;
+          
+          if (onCollisionA) onCollisionA(bodyA, bodyB);
+          if (onCollisionB) onCollisionB(bodyB, bodyA);
+          
+          // Reset timer for next check
+          this.activeCollisions.set(key, now);
+        }
+      });
+    });
+  }
+
+  private getCollisionKey(idA: number, idB: number): string {
+    return idA < idB ? `${idA}-${idB}` : `${idB}-${idA}`;
   }
 
   private cleanupDeadBlocks(): void {
@@ -70,6 +111,11 @@ export class PhysicsEngine {
         this.bodiesToRemove.add(body);
         const contraptionId = (body as unknown as { contraptionId?: string }).contraptionId;
         if (contraptionId) affectedContraptions.add(contraptionId);
+        
+        // Spawn ghost block effect
+        if (this.effects) {
+          this.effects.createGhostBlock(body, block);
+        }
       }
     });
     
@@ -159,6 +205,13 @@ export class PhysicsEngine {
   registerContraption(contraption: ContraptionLike): void {
     this.contraptions.set(contraption.id, contraption);
   }
+
+  /**
+   * Set the effect manager for visual effects
+   */
+  setEffectManager(effects: EffectManager): void {
+    this.effects = effects;
+  }
   
   /**
    * Add a body to the physics world
@@ -167,6 +220,8 @@ export class PhysicsEngine {
     Matter.World.add(this.world, body);
     // Tag with engine reference for convenience (used by blocks to queue forces)
     (body as unknown as { physics?: PhysicsEngine }).physics = this;
+    // Tag with effects manager for visual effects
+    (body as unknown as { effects?: EffectManager }).effects = this.effects || undefined;
   }
 
   /**

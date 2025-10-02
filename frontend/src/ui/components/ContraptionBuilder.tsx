@@ -193,6 +193,7 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     // Create physics and renderer (map boundaries are created automatically)
     physicsRef.current = new PhysicsEngine();
     rendererRef.current = new Renderer(canvas);
+    physicsRef.current.setEffectManager(rendererRef.current.effects);
     
     // Set up camera - center between the two contraptions
     const spawnPos = getTestSpawnPosition();

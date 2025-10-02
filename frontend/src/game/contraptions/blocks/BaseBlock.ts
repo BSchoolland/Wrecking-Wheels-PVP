@@ -8,6 +8,12 @@ import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 export type BlockType = 'core' | 'simple' | 'wheel' | 'spike';
 export type AttachmentDirection = 'top' | 'right' | 'bottom' | 'left';
 
+interface EffectsInterface {
+  spawnImpactParticles: (x: number, y: number, damage: number, vx: number, vy: number) => void;
+  spawnDamageNumber: (x: number, y: number, damage: number) => void;
+  applyBlockTint: (id: number, damage: number) => void;
+}
+
 export interface BlockData {
   id: string;
   type: BlockType;
@@ -70,6 +76,23 @@ export abstract class BaseBlock {
       const speed = Math.hypot(myBody.velocity.x, myBody.velocity.y);
       const damageAmount = this.damage * speed;
       targetBlock.health -= damageAmount;
+
+      // Spawn visual effects
+      const effects = (myBody as unknown as { effects?: EffectsInterface }).effects;
+      if (effects && damageAmount > 0.5) { // Only show effects for meaningful damage
+        // Impact point (midpoint between bodies)
+        const impactX = (myBody.position.x + otherBody.position.x) / 2;
+        const impactY = (myBody.position.y + otherBody.position.y) / 2;
+        
+        // Spawn impact particles
+        effects.spawnImpactParticles(impactX, impactY, damageAmount, myBody.velocity.x, myBody.velocity.y);
+        
+        // Spawn damage number
+        effects.spawnDamageNumber(otherBody.position.x, otherBody.position.y - 15, damageAmount);
+        
+        // Apply red tint to damaged block
+        effects.applyBlockTint(otherBody.id, damageAmount);
+      }
 
       // Compute normalized separation vector from myBody to otherBody
       const dx = otherBody.position.x - myBody.position.x;

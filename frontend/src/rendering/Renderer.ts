@@ -6,12 +6,16 @@
 import type { GameState } from '@shared/types/GameState';
 import { WORLD_BOUNDS } from '@shared/constants/physics';
 import { Camera } from '@/core/Camera';
+import { EffectManager } from './EffectManager';
+import type { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
 
 export class Renderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
   public camera: Camera;
+  public effects: EffectManager;
   private onResizeHandler = () => this.resizeCanvas();
+  private lastFrameTime = performance.now();
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -20,6 +24,7 @@ export class Renderer {
     this.ctx = ctx;
 
     this.camera = new Camera({ canvas });
+    this.effects = new EffectManager();
     this.resizeCanvas();
     window.addEventListener('resize', this.onResizeHandler);
   }
@@ -135,6 +140,12 @@ export class Renderer {
    * Render Matter.js bodies directly (for demo/testing)
    */
   renderPhysics(bodies: any[]): void {
+    // Update effects
+    const now = performance.now();
+    const deltaTime = now - this.lastFrameTime;
+    this.lastFrameTime = now;
+    this.effects.update(deltaTime);
+
     this.clear();
     this.setupCamera();
 
@@ -179,8 +190,41 @@ export class Renderer {
         this.ctx.stroke();
       }
 
+      // Apply tint overlay if damaged
+      const hasTint = this.effects.renderBlockTint(this.ctx, body);
+      if (hasTint) {
+        // Re-render shape with tint
+        if (body.circleRadius) {
+          this.ctx.beginPath();
+          this.ctx.arc(body.position.x, body.position.y, body.circleRadius, 0, Math.PI * 2);
+          this.ctx.fill();
+        } else {
+          const vertices = body.vertices;
+          this.ctx.beginPath();
+          this.ctx.moveTo(vertices[0].x, vertices[0].y);
+          for (let i = 1; i < vertices.length; i++) {
+            this.ctx.lineTo(vertices[i].x, vertices[i].y);
+          }
+          this.ctx.closePath();
+          this.ctx.fill();
+        }
+        this.ctx.globalAlpha = 1;
+      }
+
+      // Render damage cracks
+      const block = (body as unknown as { block?: BaseBlock }).block;
+      if (block) {
+        this.effects.renderDamageCracks(this.ctx, body, block);
+      }
+
       this.ctx.restore();
     });
+
+    // Render ghost blocks
+    this.effects.renderGhostBlocks(this.ctx);
+
+    // Render particles and damage numbers
+    this.effects.render(this.ctx);
 
     this.resetCamera();
   }
@@ -191,5 +235,6 @@ export class Renderer {
   destroy(): void {
     window.removeEventListener('resize', this.onResizeHandler);
     this.camera.destroy();
+    this.effects.clear();
   }
 }

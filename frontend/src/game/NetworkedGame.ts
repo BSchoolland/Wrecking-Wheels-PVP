@@ -47,6 +47,7 @@ export class NetworkedGame {
     // Initialize physics (host only)
     if (this.role === 'host') {
       this.physics = new PhysicsEngine();
+      this.physics.setEffectManager(this.renderer.effects);
       this.physics.start();
     }
     
