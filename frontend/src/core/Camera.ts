@@ -20,6 +20,7 @@ export class Camera {
   public x: number;
   public y: number;
   public zoom: number;
+  public mirrorX: boolean = false;
 
   // Panning state
   private isDragging = false;
@@ -84,7 +85,8 @@ export class Camera {
         const dy = e.clientY - this.dragStartY;
         
         // Convert screen delta to world delta (accounting for zoom)
-        this.x = this.dragStartCamX - dx / this.zoom;
+        const panDx = this.mirrorX ? -dx : dx;
+        this.x = this.dragStartCamX - panDx / this.zoom;
         this.y = this.dragStartCamY - dy / this.zoom;
 
         // Clamp camera to world bounds (with some padding)
@@ -129,7 +131,8 @@ export class Camera {
     const canvasY = screenY - rect.top;
 
     // Apply inverse camera transform
-    const worldX = (canvasX - this.canvas.width / 2) / this.zoom + this.x;
+    const dx = (canvasX - this.canvas.width / 2);
+    const worldX = ((this.mirrorX ? -dx : dx) / this.zoom) + this.x;
     const worldY = (canvasY - this.canvas.height / 2) / this.zoom + this.y;
 
     return { x: worldX, y: worldY };
@@ -139,7 +142,8 @@ export class Camera {
    * Convert world coordinates to screen coordinates
    */
   worldToScreen(worldX: number, worldY: number): { x: number; y: number } {
-    const screenX = (worldX - this.x) * this.zoom + this.canvas.width / 2;
+    const dx = (worldX - this.x) * this.zoom;
+    const screenX = (this.mirrorX ? -dx : dx) + this.canvas.width / 2;
     const screenY = (worldY - this.y) * this.zoom + this.canvas.height / 2;
 
     return { x: screenX, y: screenY };
@@ -151,6 +155,9 @@ export class Camera {
   applyTransform(ctx: CanvasRenderingContext2D): void {
     ctx.translate(this.canvas.width / 2, this.canvas.height / 2);
     ctx.scale(this.zoom, this.zoom);
+    if (this.mirrorX) {
+      ctx.scale(-1, 1);
+    }
     ctx.translate(-this.x, -this.y);
   }
 

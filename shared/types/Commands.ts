@@ -2,6 +2,23 @@
  * Command types for client -> host communication
  */
 
+export interface ContraptionData {
+  id: string;
+  name: string;
+  blocks: Array<{
+    id: string;
+    type: string;
+    gridX: number;
+    gridY: number;
+    health: number;
+    stiffness: number;
+    damage?: number;
+    knockback?: number;
+  }>;
+  direction?: number;
+  team?: string;
+}
+
 export type GameCommand = 
   | DeployCommand
   | ReadyCommand
@@ -24,6 +41,7 @@ export interface SpawnBoxCommand {
   type: 'spawn-box';
   playerId: string;
   position: { x: number; y: number };
+  contraption: ContraptionData;
 }
 
 /**

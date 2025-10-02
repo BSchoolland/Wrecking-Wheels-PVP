@@ -1,14 +1,15 @@
 /**
- * Simple Block - can attach on all 4 sides
+ * Gray Block - high health defensive block
  */
 
 import Matter from 'matter-js';
 import { BaseBlock, AttachmentDirection, PhysicsSpawnResult } from './BaseBlock';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 
-export class SimpleBlock extends BaseBlock {
+export class GrayBlock extends BaseBlock {
   constructor(id: string, gridX: number, gridY: number) {
-    super(id, 'simple', gridX, gridY, 100);
+    super(id, 'gray', gridX, gridY);
+    this.health = 2000;
   }
   
   getAttachmentFaces(): AttachmentDirection[] {
@@ -23,7 +24,7 @@ export class SimpleBlock extends BaseBlock {
       BUILDER_CONSTANTS.BLOCK_SIZE,
       { 
         label: this.id,
-        render: { fillStyle: '#2196f3', strokeStyle: '#000', lineWidth: 2 }
+        render: { fillStyle: '#757575', strokeStyle: '#000', lineWidth: 2 }
       }
     );
     

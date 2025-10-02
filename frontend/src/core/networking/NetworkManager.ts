@@ -181,9 +181,9 @@ export class NetworkManager {
       role: this.role,
       onMessage: (message) => {
         if (message.type === 'state') {
-          this.onStateUpdate(message.payload);
+          this.onStateUpdate(message.payload as unknown as GameState);
         } else if (message.type === 'command') {
-          this.onCommand(message.payload);
+          this.onCommand(message.payload as unknown as GameCommand);
         }
       },
       onConnect: () => {
@@ -222,9 +222,9 @@ export class NetworkManager {
         role: this.role,
         onMessage: (message) => {
           if (message.type === 'state') {
-            this.onStateUpdate(message.payload);
+            this.onStateUpdate(message.payload as unknown as GameState);
           } else if (message.type === 'command') {
-            this.onCommand(message.payload);
+            this.onCommand(message.payload as unknown as GameCommand);
           }
         },
         onConnect: () => {
@@ -277,12 +277,12 @@ export class NetworkManager {
   /**
    * Send game state (host only)
    */
-  sendState(state: GameState): void {
+  sendState(state: unknown): void {
     if (this.role !== 'host') {
       console.warn('Only host can send state');
       return;
     }
-    this.peerConnection?.sendState(state);
+    this.peerConnection?.sendState(state as unknown as GameState);
   }
 
   /**

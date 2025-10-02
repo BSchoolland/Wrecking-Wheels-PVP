@@ -212,11 +212,12 @@ export class Renderer {
         this.ctx.globalAlpha = 1;
       }
 
-      // Render damage cracks
+      // Render damage cracks (host or client): compute healthPercent from available source
       const block = (body as unknown as { block?: BaseBlock }).block;
-      if (block) {
-        this.effects.renderDamageCracks(this.ctx, body, block);
-      }
+      const hp = block
+        ? Math.max(0, Math.min(1, block.health / block.maxHealth))
+        : (body.render as Matter.IBodyRenderOptions & { healthPercent?: number })?.healthPercent;
+      this.effects.renderDamageCracksByPercent(this.ctx, body, hp);
 
       this.ctx.restore();
     });

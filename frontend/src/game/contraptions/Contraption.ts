@@ -12,6 +12,7 @@ export interface ContraptionSaveData {
   name: string;
   blocks: BlockData[];
   direction?: number; // 1 = right (default), -1 = left (mirrored)
+  team?: string; // Team identifier for friendly fire prevention
 }
 
 export class Contraption {
@@ -19,11 +20,13 @@ export class Contraption {
   name: string;
   blocks: Map<string, BaseBlock>; // key: "x,y" grid position
   direction: number; // 1 = right (default), -1 = left (mirrored)
+  team: string; // Team identifier for friendly fire prevention
   
-  constructor(id: string = '', name: string = 'Unnamed Contraption', direction: number = 1) {
+  constructor(id: string = '', name: string = 'Unnamed Contraption', direction: number = 1, team: string = 'default') {
     this.id = id || `contraption-${Date.now()}`;
     this.name = name;
     this.direction = direction;
+    this.team = team;
     this.blocks = new Map();
   }
   
@@ -126,9 +129,10 @@ export class Contraption {
 
       const result = block.createPhysicsBodies(worldX, worldY, this.direction);
       
-      // Tag all bodies with contraption ID and block reference
+      // Tag all bodies with contraption ID, team, and block reference
       result.bodies.forEach(body => {
         (body as unknown as { contraptionId?: string }).contraptionId = this.id;
+        (body as unknown as { team?: string }).team = this.team;
         (body as unknown as { blockId?: string }).blockId = block.id;
         (body as unknown as { block?: BaseBlock }).block = block;
         // Attach generic collision handler for damage/knockback
@@ -185,6 +189,7 @@ export class Contraption {
       name: this.name,
       blocks: this.getAllBlocks().map(b => b.toData()),
       direction: this.direction,
+      team: this.team,
     };
   }
   
@@ -192,7 +197,7 @@ export class Contraption {
    * Load contraption from JSON
    */
   static load(data: ContraptionSaveData, blockFactory: (data: BlockData) => BaseBlock): Contraption {
-    const contraption = new Contraption(data.id, data.name, data.direction ?? 1);
+    const contraption = new Contraption(data.id, data.name, data.direction ?? 1, data.team ?? 'default');
     data.blocks.forEach(blockData => {
       const block = blockFactory(blockData);
       contraption.addBlock(block);

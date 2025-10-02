@@ -5,7 +5,7 @@
 import Matter from 'matter-js';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 
-export type BlockType = 'core' | 'simple' | 'wheel' | 'spike';
+export type BlockType = 'core' | 'simple' | 'wheel' | 'spike' | 'gray';
 export type AttachmentDirection = 'top' | 'right' | 'bottom' | 'left';
 
 interface EffectsInterface {
@@ -20,6 +20,7 @@ export interface BlockData {
   gridX: number;
   gridY: number;
   health: number;
+  maxHealth: number;
   stiffness: number;
   damage?: number;
   knockback?: number;
@@ -37,16 +38,18 @@ export abstract class BaseBlock {
   gridX: number;
   gridY: number;
   health: number;
+  maxHealth: number;
   stiffness: number;
   damage: number; // damage dealt on contact
   knockback: number; // force magnitude applied on contact
   
-  constructor(id: string, type: BlockType, gridX: number, gridY: number) {
+  constructor(id: string, type: BlockType, gridX: number, gridY: number, maxHealth: number = 100) {
     this.id = id;
     this.type = type;
     this.gridX = gridX;
     this.gridY = gridY;
-    this.health = 100;
+    this.maxHealth = maxHealth;
+    this.health = maxHealth;
     this.stiffness = BUILDER_CONSTANTS.ATTACHMENT_STIFFNESS;
     this.damage = 2;
     this.knockback = 0.01;
@@ -63,15 +66,18 @@ export abstract class BaseBlock {
   abstract createPhysicsBodies(worldX: number, worldY: number, direction?: number): PhysicsSpawnResult;
 
   /**
-   * Default collision behavior: damage the other block if from a different contraption
+   * Default collision behavior: damage the other block if from a different team
    * and apply a brief separating knockback force to both bodies.
    */
   onCollision(myBody: Matter.Body, otherBody: Matter.Body): void {
     const targetBlock = (otherBody as unknown as { block?: BaseBlock }).block;
     const myContraptionId = (myBody as unknown as { contraptionId?: string }).contraptionId;
     const targetContraptionId = (otherBody as unknown as { contraptionId?: string }).contraptionId;
+    const myTeam = (myBody as unknown as { team?: string }).team;
+    const targetTeam = (otherBody as unknown as { team?: string }).team;
     
-    if (targetBlock && myContraptionId !== targetContraptionId) {
+    // Only damage if from different contraption AND different team (no friendly fire)
+    if (targetBlock && myContraptionId !== targetContraptionId && myTeam !== targetTeam) {
       // Apply damage scaled by attacker's linear speed
       const speed = Math.hypot(myBody.velocity.x, myBody.velocity.y);
       const damageAmount = this.damage * speed;
@@ -222,6 +228,7 @@ export abstract class BaseBlock {
       gridX: this.gridX,
       gridY: this.gridY,
       health: this.health,
+      maxHealth: this.maxHealth,
       stiffness: this.stiffness,
       damage: this.damage,
       knockback: this.knockback,

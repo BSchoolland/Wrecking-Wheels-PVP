@@ -278,7 +278,7 @@ export class EffectManager {
    * Render damage cracks on a block
    */
   renderDamageCracks(ctx: CanvasRenderingContext2D, body: Matter.Body, block: BaseBlock): void {
-    const healthPercent = Math.max(0, block.health / 100);
+    const healthPercent = Math.max(0, block.health / block.maxHealth);
     
     // No cracks above 70% health
     if (healthPercent > 0.7) return;
@@ -300,6 +300,38 @@ export class EffectManager {
       const length = 5 + random(i * 5) * 10;
       const startOffset = random(i * 7) * 5;
       
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(
+        center.x + Math.cos(angle) * startOffset,
+        center.y + Math.sin(angle) * startOffset
+      );
+      ctx.lineTo(
+        center.x + Math.cos(angle) * (startOffset + length),
+        center.y + Math.sin(angle) * (startOffset + length)
+      );
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  /**
+   * Render damage cracks using only health percent (for client-rendered snapshots)
+   */
+  renderDamageCracksByPercent(ctx: CanvasRenderingContext2D, body: Matter.Body, healthPercent: number | undefined): void {
+    if (healthPercent === undefined) return;
+    const hp = Math.max(0, Math.min(1, healthPercent));
+    if (hp > 0.7) return;
+    ctx.strokeStyle = '#000';
+    ctx.globalAlpha = 0.6;
+    const center = body.position;
+    const crackCount = hp > 0.4 ? 3 : hp > 0.25 ? 5 : 10;
+    const seed = body.id;
+    const random = (n: number) => (Math.sin(seed * n) + 1) / 2;
+    for (let i = 0; i < crackCount; i++) {
+      const angle = random(i * 3) * Math.PI * 2;
+      const length = 5 + random(i * 5) * 10;
+      const startOffset = random(i * 7) * 5;
       ctx.lineWidth = 1.5;
       ctx.beginPath();
       ctx.moveTo(

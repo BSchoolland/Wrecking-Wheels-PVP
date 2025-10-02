@@ -5,6 +5,7 @@
 import { useState, useRef, useEffect } from 'react';
 import Matter from 'matter-js';
 import { Contraption, BlockType, createBlock, blockFromData } from '@/game/contraptions';
+import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
 import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
 import { Renderer } from '@/rendering/Renderer';
 import { getTestSpawnPosition } from '@/game/terrain/MapLoader';
@@ -19,6 +20,7 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
   const [contraption, setContraption] = useState(() => new Contraption());
   const [selectedBlock, setSelectedBlock] = useState<BlockType>('core');
   const [isTesting, setIsTesting] = useState(false);
+  const [showLoadModal, setShowLoadModal] = useState(false);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const builderCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -178,6 +180,30 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     alert('Contraption saved!');
   };
 
+  // Get all saved contraptions
+  const getSavedContraptions = () => {
+    const saved = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith('contraption-')) {
+        try {
+          const data = JSON.parse(localStorage.getItem(key)!);
+          saved.push(data);
+        } catch (e) {
+          console.error('Failed to parse contraption:', key);
+        }
+      }
+    }
+    return saved;
+  };
+
+  // Load a contraption
+  const loadContraption = (data: ContraptionSaveData) => {
+    const loaded = Contraption.load(data, blockFromData);
+    setContraption(loaded);
+    setShowLoadModal(false);
+  };
+
   useEffect(() => {
     if (builderCanvasRef.current) {
       renderBuilder();
@@ -207,16 +233,16 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     if (blocks.length > 0) {
       const spacing = 300; // Distance between contraptions
       
-      // Left contraption (facing right, direction = 1)
-      const leftContraption = new Contraption(contraption.id + '-left', contraption.name, 1);
+      // Left contraption (facing right, direction = 1, team 'left')
+      const leftContraption = new Contraption(contraption.id + '-left', contraption.name, 1, 'team-left');
       contraption.getAllBlocks().forEach(b => leftContraption.addBlock(blockFromData(b.toData())));
       physicsRef.current?.registerContraption(leftContraption);
       const leftPhysics = leftContraption.buildPhysics(spawnPos.x - spacing, spawnPos.y - 100);
       leftPhysics.bodies.forEach(body => physicsRef.current?.addBody(body));
       leftPhysics.constraints.forEach(constraint => physicsRef.current?.addConstraint(constraint));
       
-      // Right contraption (facing left, direction = -1)
-      const rightContraption = new Contraption(contraption.id + '-right', contraption.name, -1);
+      // Right contraption (facing left, direction = -1, team 'right')
+      const rightContraption = new Contraption(contraption.id + '-right', contraption.name, -1, 'team-right');
       contraption.getAllBlocks().forEach(b => rightContraption.addBlock(blockFromData(b.toData())));
       physicsRef.current?.registerContraption(rightContraption);
       const rightPhysics = rightContraption.buildPhysics(spawnPos.x + spacing, spawnPos.y - 100);
@@ -280,6 +306,12 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
             >
               Spike
             </button>
+            <button 
+              className={selectedBlock === 'gray' ? 'active' : ''}
+              onClick={() => setSelectedBlock('gray')}
+            >
+              Gray
+            </button>
           </div>
           
           <canvas
@@ -293,6 +325,7 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
           <div className="builder-actions">
             <button onClick={testContraption}>Test Contraption</button>
             <button onClick={saveContraption}>Save</button>
+            <button onClick={() => setShowLoadModal(true)}>Load</button>
           </div>
         </>
       ) : (
@@ -304,6 +337,23 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
               <span>Mouse Wheel: Zoom in/out</span>
             </div>
             <button onClick={stopTest} className="stop-test">Stop Test</button>
+          </div>
+        </div>
+      )}
+      
+      {showLoadModal && (
+        <div className="load-modal-overlay" onClick={() => setShowLoadModal(false)}>
+          <div className="load-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Load Contraption</h3>
+            <div className="contraption-list">
+              {getSavedContraptions().map((data) => (
+                <div key={data.id} className="contraption-item" onClick={() => loadContraption(data)}>
+                  <div className="contraption-name">{data.name}</div>
+                  <div className="contraption-info">{data.blocks.length} blocks</div>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => setShowLoadModal(false)}>Cancel</button>
           </div>
         </div>
       )}
