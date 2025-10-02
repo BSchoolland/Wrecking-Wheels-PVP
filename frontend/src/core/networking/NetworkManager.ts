@@ -4,16 +4,61 @@
  */
 
 import { PeerConnection } from './PeerConnection';
+import type { GameState } from '@shared/types/GameState';
+import type { GameCommand } from '@shared/types/Commands';
 
 export type NetworkRole = 'host' | 'client';
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'failed';
+
+// Signaling message types
+export interface ConnectedMessage {
+  type: 'connected';
+  clientId: string;
+}
+
+export interface PeerJoinedMessage {
+  type: 'peer-joined';
+  peerId: string;
+  peerRole: NetworkRole;
+}
+
+export interface SignalMessage {
+  type: 'signal';
+  fromId: string;
+  signal: WebRTCSignal;
+}
+
+export interface PeerLeftMessage {
+  type: 'peer-left';
+  peerId: string;
+}
+
+export type SignalingMessage = ConnectedMessage | PeerJoinedMessage | SignalMessage | PeerLeftMessage;
+
+// WebRTC signal types
+export interface OfferSignal {
+  type: 'offer';
+  offer: RTCSessionDescriptionInit;
+}
+
+export interface AnswerSignal {
+  type: 'answer';
+  answer: RTCSessionDescriptionInit;
+}
+
+export interface IceCandidateSignal {
+  type: 'ice-candidate';
+  candidate: RTCIceCandidate;
+}
+
+export type WebRTCSignal = OfferSignal | AnswerSignal | IceCandidateSignal;
 
 interface NetworkManagerConfig {
   role: NetworkRole;
   lobbyId: string;
   signalingServerUrl: string;
-  onStateUpdate?: (state: any) => void;
-  onCommand?: (command: any) => void;
+  onStateUpdate?: (state: GameState) => void;
+  onCommand?: (command: GameCommand) => void;
   onConnected?: () => void;
   onDisconnected?: () => void;
 }
@@ -27,8 +72,8 @@ export class NetworkManager {
   private peerId: string | null = null;
   private connectionState: ConnectionState = 'disconnected';
   
-  private onStateUpdate: (state: any) => void;
-  private onCommand: (command: any) => void;
+  private onStateUpdate: (state: GameState) => void;
+  private onCommand: (command: GameCommand) => void;
   private onConnected: () => void;
   private onDisconnected: () => void;
 
@@ -73,7 +118,7 @@ export class NetworkManager {
   /**
    * Handle messages from signaling server
    */
-  private async handleSignalingMessage(message: any): Promise<void> {
+  private async handleSignalingMessage(message: SignalingMessage): Promise<void> {
     if (import.meta.env.DEV) console.log('Signaling message:', message.type);
 
     switch (message.type) {
@@ -168,7 +213,7 @@ export class NetworkManager {
   /**
    * Handle WebRTC signaling from peer
    */
-  private async handleWebRTCSignal(_fromId: string, signal: any): Promise<void> {
+  private async handleWebRTCSignal(_fromId: string, signal: WebRTCSignal): Promise<void> {
     if (import.meta.env.DEV) console.log('Received WebRTC signal:', signal.type);
 
     // Create peer connection if we don't have one (client receiving offer)
@@ -219,7 +264,7 @@ export class NetworkManager {
   /**
    * Send signaling message to peer via server
    */
-  private sendSignal(signal: any): void {
+  private sendSignal(signal: WebRTCSignal): void {
     if (!this.signalingWs || !this.peerId) return;
 
     this.signalingWs.send(JSON.stringify({
@@ -232,7 +277,7 @@ export class NetworkManager {
   /**
    * Send game state (host only)
    */
-  sendState(state: any): void {
+  sendState(state: GameState): void {
     if (this.role !== 'host') {
       console.warn('Only host can send state');
       return;
@@ -243,7 +288,7 @@ export class NetworkManager {
   /**
    * Send command (client to host, or host to itself)
    */
-  sendCommand(command: any): void {
+  sendCommand(command: GameCommand): void {
     this.peerConnection?.sendCommand(command);
   }
 

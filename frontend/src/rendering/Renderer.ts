@@ -8,6 +8,7 @@ import { WORLD_BOUNDS } from '@shared/constants/physics';
 import { Camera } from '@/core/Camera';
 import { EffectManager } from './EffectManager';
 import type { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
+import type * as Matter from 'matter-js';
 
 export class Renderer {
   private canvas: HTMLCanvasElement;
@@ -139,7 +140,7 @@ export class Renderer {
   /**
    * Render Matter.js bodies directly (for demo/testing)
    */
-  renderPhysics(bodies: any[]): void {
+  renderPhysics(bodies: Matter.Body[]): void {
     // Update effects
     const now = performance.now();
     const deltaTime = now - this.lastFrameTime;
@@ -154,7 +155,7 @@ export class Renderer {
       this.ctx.save();
 
       // Get fill color from render options or use default
-      const fillStyle = (body.render as any)?.fillStyle || 
+      const fillStyle = (body.render as Matter.IBodyRenderOptions)?.fillStyle ||
         (body.isStatic ? '#555555' : '#3498db');
 
       this.ctx.fillStyle = fillStyle;

@@ -5,8 +5,33 @@
 import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
 import { Renderer } from '@/rendering/Renderer';
 import { NetworkManager, NetworkRole } from '@/core/networking/NetworkManager';
-import type { SpawnBoxCommand } from '@shared/types/Commands';
+import type { SpawnBoxCommand, GameCommand } from '@shared/types/Commands';
+import type { GameState } from '@shared/types/GameState';
 import type * as Matter from 'matter-js';
+
+// Extended Matter.js types for our use case
+interface ExtendedBody extends Matter.Body {
+  customId?: string;
+  ownerId?: string;
+}
+
+interface SerializableBody {
+  id: string;
+  position: { x: number; y: number };
+  angle: number;
+  vertices: Array<{ x: number; y: number }>;
+  circleRadius?: number;
+  isStatic: boolean;
+  render: {
+    fillStyle: string;
+  };
+}
+
+interface NetworkSnapshot {
+  timestamp: number;
+  bodies: SerializableBody[];
+  _receivedAt?: number;
+}
 
 interface NetworkedGameConfig {
   canvas: HTMLCanvasElement;
@@ -28,12 +53,12 @@ export class NetworkedGame {
   private animationFrameId: number | null = null;
   
   // Track bodies for state sync
-  private bodies: Map<string, Matter.Body> = new Map();
+  private bodies: Map<string, ExtendedBody> = new Map();
   private lastSyncTime = 0;
   private syncInterval = 50; // Send state updates every 50ms (20 times per second)
 
   // Client-side interpolation buffer
-  private snapshotBuffer: any[] = [];
+  private snapshotBuffer: NetworkSnapshot[] = [];
   private interpolationDelay = 100; // ms to buffer behind for smoothness
 
   constructor(config: NetworkedGameConfig) {
@@ -97,7 +122,7 @@ export class NetworkedGame {
   /**
    * Handle incoming commands (host only)
    */
-  private handleCommand(command: any): void {
+  private handleCommand(command: GameCommand): void {
     if (this.role !== 'host' || !this.physics) return;
 
     switch (command.type) {
@@ -122,8 +147,8 @@ export class NetworkedGame {
       render: { fillStyle: color },
     });
 
-    (box as any).customId = boxId;
-    (box as any).ownerId = playerId;
+    (box as ExtendedBody).customId = boxId;
+    (box as ExtendedBody).ownerId = playerId;
     
     this.physics.addBody(box);
     this.bodies.set(boxId, box);
@@ -134,7 +159,7 @@ export class NetworkedGame {
   /**
    * Handle state update from host (client only)
    */
-  private handleStateUpdate(state: any): void {
+  private handleStateUpdate(state: GameState): void {
     if (this.role === 'host') return;
     // Push snapshot with receipt time as fallback
     const snapshot = { ...state, _receivedAt: Date.now() };
@@ -150,7 +175,7 @@ export class NetworkedGame {
   /**
    * Serialize physics state for network transmission (host only)
    */
-  private serializeState(): any {
+  private serializeState(): NetworkSnapshot | null {
     if (!this.physics) return null;
 
     const allBodies = this.physics.getAllBodies();
@@ -158,14 +183,14 @@ export class NetworkedGame {
     return {
       timestamp: Date.now(),
       bodies: allBodies.map(body => ({
-        id: (body as any).customId || `static-${body.id}`,
+        id: (body as ExtendedBody).customId || `static-${body.id}`,
         position: { x: body.position.x, y: body.position.y },
         angle: body.angle,
-        vertices: body.vertices.map((v: any) => ({ x: v.x, y: v.y })),
+        vertices: body.vertices.map((v: Matter.Vector) => ({ x: v.x, y: v.y })),
         circleRadius: body.circleRadius,
         isStatic: body.isStatic,
         render: {
-          fillStyle: (body.render as any)?.fillStyle || (body.isStatic ? '#555555' : '#3498db')
+          fillStyle: (body.render as Matter.IBodyRenderOptions)?.fillStyle || (body.isStatic ? '#555555' : '#3498db')
         },
       })),
     };
@@ -216,7 +241,7 @@ export class NetworkedGame {
   /**
    * Build interpolated Matter-like bodies for rendering on the client
    */
-  private getInterpolatedBodies(targetTime: number): any[] {
+  private getInterpolatedBodies(targetTime: number): Matter.Body[] {
     if (this.snapshotBuffer.length === 0) {
       return Array.from(this.bodies.values());
     }
@@ -245,16 +270,16 @@ export class NetworkedGame {
     const clampedAlpha = Math.max(0, Math.min(1, alpha));
 
     // Index bodies by id for prev/next
-    const prevMap: Map<string, any> = new Map(prev.bodies.map((b: any) => [b.id, b]));
-    const nextMap: Map<string, any> = new Map(next.bodies.map((b: any) => [b.id, b]));
+    const prevMap: Map<string, SerializableBody> = new Map(prev.bodies.map((b: SerializableBody) => [b.id, b]));
+    const nextMap: Map<string, SerializableBody> = new Map(next.bodies.map((b: SerializableBody) => [b.id, b]));
     const ids = new Set<string>();
     prevMap.forEach((_, id) => ids.add(id));
     nextMap.forEach((_, id) => ids.add(id));
 
-    const result: any[] = [];
+    const result: Matter.Body[] = [];
     ids.forEach((id) => {
-      const a: any = prevMap.get(id) || nextMap.get(id);
-      const b: any = nextMap.get(id) || prevMap.get(id);
+      const a: SerializableBody = prevMap.get(id) || nextMap.get(id);
+      const b: SerializableBody = nextMap.get(id) || prevMap.get(id);
       if (!a || !b) return;
 
       const lerp = (x: number, y: number, t: number) => x + (y - x) * t;
@@ -271,19 +296,19 @@ export class NetworkedGame {
 
       // Interpolate vertices if provided; else approximate from pos/angle not needed for boxes
       const vertices = (a.vertices && b.vertices && a.vertices.length === b.vertices.length)
-        ? a.vertices.map((va: any, i: number) => ({
+        ? a.vertices.map((va: { x: number; y: number }, i: number) => ({
             x: lerp(va.x, b.vertices[i].x, clampedAlpha),
             y: lerp(va.y, b.vertices[i].y, clampedAlpha),
           }))
         : (a.vertices || b.vertices || []);
 
-      const fakeBody: any = {
+      const fakeBody: Matter.Body = {
         position: pos,
         angle,
         vertices,
         circleRadius: a.circleRadius ?? b.circleRadius,
         isStatic: a.isStatic ?? b.isStatic,
-        render: a.render ?? b.render,
+        render: a.render ?? b.render ?? { fillStyle: '#3498db' },
       };
       result.push(fakeBody);
     });
