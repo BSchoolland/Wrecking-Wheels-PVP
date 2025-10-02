@@ -106,6 +106,37 @@ export abstract class BaseBlock {
   }
   
   /**
+   * Get local attachment points for a given face
+   * Override in subclasses for non-rectangular shapes or offset bodies
+   */
+  protected getAttachmentPoints(face: AttachmentDirection, facingDirection: number): { pointA: Matter.Vector, pointB: Matter.Vector } {
+    const halfSize = BUILDER_CONSTANTS.GRID_SIZE / 2;
+    const myHalfHeight = this.getConnectionHalfHeight();
+    
+    if (face === 'right') {
+      return {
+        pointA: { x: halfSize * facingDirection, y: -halfSize },
+        pointB: { x: halfSize * facingDirection, y: halfSize }
+      };
+    } else if (face === 'bottom') {
+      return {
+        pointA: { x: -halfSize * facingDirection, y: myHalfHeight },
+        pointB: { x: halfSize * facingDirection, y: myHalfHeight }
+      };
+    } else if (face === 'left') {
+      return {
+        pointA: { x: -halfSize * facingDirection, y: -halfSize },
+        pointB: { x: -halfSize * facingDirection, y: halfSize }
+      };
+    } else { // top
+      return {
+        pointA: { x: -halfSize * facingDirection, y: -myHalfHeight },
+        pointB: { x: halfSize * facingDirection, y: -myHalfHeight }
+      };
+    }
+  }
+  
+  /**
    * Create constraints to connect this block to a neighbor
    * @param direction Which direction the neighbor is in
    * @param myBody This block's primary body
@@ -120,56 +151,40 @@ export abstract class BaseBlock {
     neighbor?: BaseBlock,
     facingDirection: number = 1
   ): Matter.Constraint[] {
-    const halfSize = BUILDER_CONSTANTS.GRID_SIZE / 2;
-    const myHalfHeight = this.getConnectionHalfHeight();
-    const neighborHalfHeight = neighbor?.getConnectionHalfHeight() ?? halfSize;
     const constraints: Matter.Constraint[] = [];
     
-    if (direction === 'right') {
-      // Top corner constraint
-      constraints.push(Matter.Constraint.create({
-        bodyA: myBody,
-        bodyB: neighborBody,
-        pointA: { x: halfSize * facingDirection, y: -halfSize },
-        pointB: { x: -halfSize * facingDirection, y: -halfSize },
-        length: 0,
-        stiffness: this.stiffness,
-        damping: BUILDER_CONSTANTS.CONSTRAINT_DAMPING,
-      }));
-      
-      // Bottom corner constraint
-      constraints.push(Matter.Constraint.create({
-        bodyA: myBody,
-        bodyB: neighborBody,
-        pointA: { x: halfSize * facingDirection, y: halfSize },
-        pointB: { x: -halfSize * facingDirection, y: halfSize },
-        length: 0,
-        stiffness: this.stiffness,
-        damping: BUILDER_CONSTANTS.CONSTRAINT_DAMPING,
-      }));
-    } else if (direction === 'bottom') {
-      // Left corner constraint
-      constraints.push(Matter.Constraint.create({
-        bodyA: myBody,
-        bodyB: neighborBody,
-        pointA: { x: -halfSize * facingDirection, y: myHalfHeight },
-        pointB: { x: -halfSize * facingDirection, y: -neighborHalfHeight },
-        length: 0,
-        stiffness: this.stiffness,
-        damping: BUILDER_CONSTANTS.CONSTRAINT_DAMPING,
-      }));
-      
-      // Right corner constraint
-      constraints.push(Matter.Constraint.create({
-        bodyA: myBody,
-        bodyB: neighborBody,
-        pointA: { x: halfSize * facingDirection, y: myHalfHeight },
-        pointB: { x: halfSize * facingDirection, y: -neighborHalfHeight },
-        length: 0,
-        stiffness: this.stiffness,
-        damping: BUILDER_CONSTANTS.CONSTRAINT_DAMPING,
-      }));
-    }
+    // Get attachment points for this block and neighbor
+    const myPoints = this.getAttachmentPoints(direction, facingDirection);
+    
+    // Determine opposite face for neighbor
+    const oppositeFace: Record<AttachmentDirection, AttachmentDirection> = {
+      'top': 'bottom',
+      'right': 'left',
+      'bottom': 'top',
+      'left': 'right'
+    };
+    const neighborPoints = neighbor?.getAttachmentPoints(oppositeFace[direction], facingDirection) ?? myPoints;
+    
+    // Create two corner constraints
+    constraints.push(Matter.Constraint.create({
+      bodyA: myBody,
+      bodyB: neighborBody,
+      pointA: myPoints.pointA,
+      pointB: neighborPoints.pointA,
+      length: 0,
+      stiffness: this.stiffness,
+      damping: BUILDER_CONSTANTS.CONSTRAINT_DAMPING,
+    }));
+    
+    constraints.push(Matter.Constraint.create({
+      bodyA: myBody,
+      bodyB: neighborBody,
+      pointA: myPoints.pointB,
+      pointB: neighborPoints.pointB,
+      length: 0,
+      stiffness: this.stiffness,
+      damping: BUILDER_CONSTANTS.CONSTRAINT_DAMPING,
+    }));
     
     return constraints;
   }

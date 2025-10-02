@@ -9,6 +9,11 @@ import type { PhysicsBodyState, Vector2D } from '@shared/types/GameState';
 import { createMapBoundaries } from '@/game/terrain/MapLoader';
 import type { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
 
+interface ContraptionLike {
+  id: string;
+  checkConnectivity?: () => void;
+}
+
 export class PhysicsEngine {
   private engine: Matter.Engine;
   private world: Matter.World;
@@ -16,6 +21,7 @@ export class PhysicsEngine {
   private bodiesToRemove: Set<Matter.Body> = new Set();
   private constraintsToRemove: Set<Matter.Constraint> = new Set();
   private pendingForces: Map<number, { x: number, y: number }> = new Map();
+  private contraptions: Map<string, ContraptionLike> = new Map();
 
   constructor() {
     // Create Matter.js engine
@@ -55,12 +61,15 @@ export class PhysicsEngine {
   private cleanupDeadBlocks(): void {
     const allBodies = Matter.Composite.allBodies(this.world);
     const allConstraints = Matter.Composite.allConstraints(this.world);
+    const affectedContraptions = new Set<string>();
     
     // Find blocks with 0 health
     allBodies.forEach(body => {
       const block = (body as unknown as { block?: BaseBlock }).block;
       if (block && block.health <= 0) {
         this.bodiesToRemove.add(body);
+        const contraptionId = (body as unknown as { contraptionId?: string }).contraptionId;
+        if (contraptionId) affectedContraptions.add(contraptionId);
       }
     });
     
@@ -83,6 +92,14 @@ export class PhysicsEngine {
       Matter.World.remove(this.world, Array.from(this.constraintsToRemove) as unknown as Matter.Body);
       this.constraintsToRemove.clear();
     }
+    
+    // Check connectivity for affected contraptions
+    affectedContraptions.forEach(id => {
+      const contraption = this.contraptions.get(id);
+      if (contraption?.checkConnectivity) {
+        contraption.checkConnectivity();
+      }
+    });
   }
 
   /**
@@ -136,6 +153,13 @@ export class PhysicsEngine {
     Matter.Engine.update(this.engine, delta);
   }
 
+  /**
+   * Register a contraption for connectivity tracking
+   */
+  registerContraption(contraption: ContraptionLike): void {
+    this.contraptions.set(contraption.id, contraption);
+  }
+  
   /**
    * Add a body to the physics world
    */

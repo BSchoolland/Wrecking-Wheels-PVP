@@ -7,9 +7,11 @@ import { BaseBlock, AttachmentDirection, PhysicsSpawnResult } from './BaseBlock'
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 
 export class SpikeBlock extends BaseBlock {
+  static readonly BODY_OFFSET = -5; // Shift to align attachment face with grid
+  
   constructor(id: string, gridX: number, gridY: number) {
     super(id, 'spike', gridX, gridY);
-    this.health = 100;
+    this.health = 1000; // 10x health
     // Spikes hit harder and knock back more by default
     this.damage = 25;
     this.knockback = 0.02;
@@ -17,6 +19,19 @@ export class SpikeBlock extends BaseBlock {
   
   getAttachmentFaces(): AttachmentDirection[] {
     return ['left'];
+  }
+  
+  protected getAttachmentPoints(face: AttachmentDirection, facingDirection: number): { pointA: Matter.Vector, pointB: Matter.Vector } {
+    const halfSize = BUILDER_CONSTANTS.GRID_SIZE / 2;
+    if (face === 'left') {
+      // Account for body offset to align attachment with actual triangle edge
+      const x = (-halfSize - SpikeBlock.BODY_OFFSET) * facingDirection;
+      return {
+        pointA: { x, y: -halfSize },
+        pointB: { x, y: halfSize }
+      };
+    }
+    return super.getAttachmentPoints(face, facingDirection);
   }
   
   // Uses BaseBlock.onCollision with stronger defaults
@@ -27,8 +42,7 @@ export class SpikeBlock extends BaseBlock {
     const dir = direction ?? 1;
     
     // Shift slightly left so attachment aligns more with block face
-    const offsetX = -7 * dir;
-    const baseX = worldX + offsetX;
+    const baseX = worldX + SpikeBlock.BODY_OFFSET * dir;
     
     // Local triangle (attachment face on the left when dir=1, mirrored when dir=-1)
     const local = [

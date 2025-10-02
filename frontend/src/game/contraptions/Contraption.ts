@@ -4,7 +4,7 @@
 
 import Matter from 'matter-js';
 import { BaseBlock } from './blocks/BaseBlock';
-import type { BlockData } from './blocks/BaseBlock';
+import type { BlockData, AttachmentDirection } from './blocks/BaseBlock';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 
 export interface ContraptionSaveData {
@@ -44,6 +44,64 @@ export class Contraption {
     return Array.from(this.blocks.values());
   }
   
+  hasCore(): boolean {
+    return this.getAllBlocks().some(b => b.type === 'core');
+  }
+  
+  findCore(): BaseBlock | undefined {
+    return this.getAllBlocks().find(b => b.type === 'core');
+  }
+  
+  /**
+   * Check connectivity using BFS pathfinding.
+   * Blocks not connected to the core have their health set to 0.
+   */
+  checkConnectivity(): void {
+    const core = this.findCore();
+    if (!core || core.health <= 0) {
+      // No core or dead core - all blocks die
+      this.getAllBlocks().forEach(b => b.health = 0);
+      return;
+    }
+    
+    const connected = new Set<string>();
+    const queue: BaseBlock[] = [core];
+    connected.add(`${core.gridX},${core.gridY}`);
+    
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      const faces = current.getAttachmentFaces();
+      
+      // Check all adjacent blocks
+      const neighbors: Array<{ dx: number; dy: number; face: string; opposite: string }> = [
+        { dx: 0, dy: -1, face: 'top', opposite: 'bottom' },
+        { dx: 1, dy: 0, face: 'right', opposite: 'left' },
+        { dx: 0, dy: 1, face: 'bottom', opposite: 'top' },
+        { dx: -1, dy: 0, face: 'left', opposite: 'right' },
+      ];
+      
+      for (const { dx, dy, face, opposite } of neighbors) {
+        if (!faces.includes(face as AttachmentDirection)) continue;
+        
+        const neighbor = this.getBlock(current.gridX + dx, current.gridY + dy);
+        const key = `${current.gridX + dx},${current.gridY + dy}`;
+        
+        if (neighbor && neighbor.health > 0 && !connected.has(key) && neighbor.getAttachmentFaces().includes(opposite as AttachmentDirection)) {
+          connected.add(key);
+          queue.push(neighbor);
+        }
+      }
+    }
+    
+    // Set health to 0 for disconnected blocks
+    this.getAllBlocks().forEach(block => {
+      const key = `${block.gridX},${block.gridY}`;
+      if (!connected.has(key) && block.health > 0) {
+        block.health = 0;
+      }
+    });
+  }
+  
   /**
    * Build physics bodies and constraints for this contraption
    * Orchestrates block spawning by calling methods on each block
@@ -55,13 +113,16 @@ export class Contraption {
     
     const gridSize = BUILDER_CONSTANTS.GRID_SIZE;
     
+    // Revive all blocks and check connectivity once on spawn
+    this.blocks.forEach(block => {
+      if (block.health <= 0) block.health = 100;
+    });
+    this.checkConnectivity();
+    
     // Create bodies for each block by calling block's method
     this.blocks.forEach((block) => {
       const worldX = startX + block.gridX * gridSize * this.direction;
       const worldY = startY + block.gridY * gridSize;
-      
-      // Revive destroyed blocks for a fresh spawn
-      if (block.health <= 0) block.health = 100;
 
       const result = block.createPhysicsBodies(worldX, worldY, this.direction);
       

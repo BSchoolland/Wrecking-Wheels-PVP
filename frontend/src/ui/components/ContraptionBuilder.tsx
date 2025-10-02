@@ -45,6 +45,11 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     const gridX = Math.floor((x - offsetX) / gridSize + 0.5);
     const gridY = Math.floor((y - offsetY) / gridSize + 0.5);
     
+    // Check if trying to place a core when one already exists
+    if (selectedBlock === 'core' && contraption.hasCore()) {
+      return;
+    }
+    
     // Add block
     const block = createBlock(selectedBlock, gridX, gridY);
     if (contraption.addBlock(block)) {
@@ -118,15 +123,17 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     bodiesToRender.forEach(body => {
       ctx.save();
 
-      const fill = (body.render as any)?.fillStyle || '#888';
-      const stroke = (body.render as any)?.strokeStyle || '#000';
-      const lineWidth = (body.render as any)?.lineWidth ?? 2;
+      const bodyRender = body.render as { fillStyle?: string; strokeStyle?: string; lineWidth?: number };
+      const fill = bodyRender?.fillStyle || '#888';
+      const stroke = bodyRender?.strokeStyle || '#000';
+      const lineWidth = bodyRender?.lineWidth ?? 2;
       ctx.fillStyle = fill;
       ctx.strokeStyle = stroke;
       ctx.lineWidth = lineWidth;
 
-      if ((body as any).circleRadius) {
-        const r = (body as any).circleRadius as number;
+      const bodyWithCircle = body as Matter.Body & { circleRadius?: number };
+      if (bodyWithCircle.circleRadius) {
+        const r = bodyWithCircle.circleRadius;
         ctx.beginPath();
         ctx.arc(body.position.x, body.position.y, r, 0, Math.PI * 2);
         ctx.fill();
@@ -202,6 +209,7 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
       // Left contraption (facing right, direction = 1)
       const leftContraption = new Contraption(contraption.id + '-left', contraption.name, 1);
       contraption.getAllBlocks().forEach(b => leftContraption.addBlock(blockFromData(b.toData())));
+      physicsRef.current?.registerContraption(leftContraption);
       const leftPhysics = leftContraption.buildPhysics(spawnPos.x - spacing, spawnPos.y - 100);
       leftPhysics.bodies.forEach(body => physicsRef.current?.addBody(body));
       leftPhysics.constraints.forEach(constraint => physicsRef.current?.addConstraint(constraint));
@@ -209,6 +217,7 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
       // Right contraption (facing left, direction = -1)
       const rightContraption = new Contraption(contraption.id + '-right', contraption.name, -1);
       contraption.getAllBlocks().forEach(b => rightContraption.addBlock(blockFromData(b.toData())));
+      physicsRef.current?.registerContraption(rightContraption);
       const rightPhysics = rightContraption.buildPhysics(spawnPos.x + spacing, spawnPos.y - 100);
       rightPhysics.bodies.forEach(body => physicsRef.current?.addBody(body));
       rightPhysics.constraints.forEach(constraint => physicsRef.current?.addConstraint(constraint));
