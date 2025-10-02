@@ -23,7 +23,7 @@ export class WheelBlock extends BaseBlock {
     return WheelBlock.ATTACHMENT_HEIGHT / 2;
   }
   
-  createPhysicsBodies(worldX: number, worldY: number): PhysicsSpawnResult {
+  createPhysicsBodies(worldX: number, worldY: number, direction: number = 1): PhysicsSpawnResult {
     // Use unique negative collision group per wheel so its parts don't collide with each other
     // while not affecting other wheels
     const group = Matter.Body.nextGroup(true);
@@ -57,6 +57,15 @@ export class WheelBlock extends BaseBlock {
         }
       }
     );
+    // Simple motor: accelerate forward until target angular velocity
+    (wheel as unknown as { onTick?: () => void }).onTick = () => {
+      const TARGET_W_AVG = 6 * direction; // rad/s (direction determines spin direction)
+      const MOTOR_TORQUE = 0.01 * direction; // torque matches direction
+      if ((direction > 0 && wheel.angularVelocity < TARGET_W_AVG) || 
+          (direction < 0 && wheel.angularVelocity > TARGET_W_AVG)) {
+        (wheel as unknown as { torque?: number }).torque = ((wheel as unknown as { torque?: number }).torque || 0) + MOTOR_TORQUE;
+      }
+    };
     
     // Connect wheel to attachment face with revolute constraint (free spinning)
     const axle = Matter.Constraint.create({

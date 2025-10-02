@@ -11,16 +11,19 @@ export interface ContraptionSaveData {
   id: string;
   name: string;
   blocks: BlockData[];
+  direction?: number; // 1 = right (default), -1 = left (mirrored)
 }
 
 export class Contraption {
   id: string;
   name: string;
   blocks: Map<string, BaseBlock>; // key: "x,y" grid position
+  direction: number; // 1 = right (default), -1 = left (mirrored)
   
-  constructor(id: string = '', name: string = 'Unnamed Contraption') {
+  constructor(id: string = '', name: string = 'Unnamed Contraption', direction: number = 1) {
     this.id = id || `contraption-${Date.now()}`;
     this.name = name;
+    this.direction = direction;
     this.blocks = new Map();
   }
   
@@ -54,10 +57,23 @@ export class Contraption {
     
     // Create bodies for each block by calling block's method
     this.blocks.forEach((block) => {
-      const worldX = startX + block.gridX * gridSize;
+      const worldX = startX + block.gridX * gridSize * this.direction;
       const worldY = startY + block.gridY * gridSize;
       
-      const result = block.createPhysicsBodies(worldX, worldY);
+      // Revive destroyed blocks for a fresh spawn
+      if (block.health <= 0) block.health = 100;
+
+      const result = block.createPhysicsBodies(worldX, worldY, this.direction);
+      
+      // Tag all bodies with contraption ID and block reference
+      result.bodies.forEach(body => {
+        (body as unknown as { contraptionId?: string }).contraptionId = this.id;
+        (body as unknown as { blockId?: string }).blockId = block.id;
+        (body as unknown as { block?: BaseBlock }).block = block;
+        // Attach generic collision handler for damage/knockback
+        (body as unknown as { onCollision?: (myBody: Matter.Body, otherBody: Matter.Body) => void }).onCollision =
+          (myBody: Matter.Body, otherBody: Matter.Body) => block.onCollision(myBody, otherBody);
+      });
       
       bodies.push(...result.bodies);
       constraints.push(...result.constraints);
@@ -77,7 +93,7 @@ export class Contraption {
         if (neighbor && neighbor.getAttachmentFaces().includes('left')) {
           const neighborBody = bodyMap.get(`${neighbor.gridX},${neighbor.gridY}`);
           if (neighborBody) {
-            const connectionConstraints = block.createConnectionConstraints('right', blockBody, neighborBody, neighbor);
+            const connectionConstraints = block.createConnectionConstraints('right', blockBody, neighborBody, neighbor, this.direction);
             constraints.push(...connectionConstraints);
           }
         }
@@ -89,7 +105,7 @@ export class Contraption {
         if (neighbor && neighbor.getAttachmentFaces().includes('top')) {
           const neighborBody = bodyMap.get(`${neighbor.gridX},${neighbor.gridY}`);
           if (neighborBody) {
-            const connectionConstraints = block.createConnectionConstraints('bottom', blockBody, neighborBody, neighbor);
+            const connectionConstraints = block.createConnectionConstraints('bottom', blockBody, neighborBody, neighbor, this.direction);
             constraints.push(...connectionConstraints);
           }
         }
@@ -107,6 +123,7 @@ export class Contraption {
       id: this.id,
       name: this.name,
       blocks: this.getAllBlocks().map(b => b.toData()),
+      direction: this.direction,
     };
   }
   
@@ -114,7 +131,7 @@ export class Contraption {
    * Load contraption from JSON
    */
   static load(data: ContraptionSaveData, blockFactory: (data: BlockData) => BaseBlock): Contraption {
-    const contraption = new Contraption(data.id, data.name);
+    const contraption = new Contraption(data.id, data.name, data.direction ?? 1);
     data.blocks.forEach(blockData => {
       const block = blockFactory(blockData);
       contraption.addBlock(block);

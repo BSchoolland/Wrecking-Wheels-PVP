@@ -4,7 +4,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 import Matter from 'matter-js';
-import { Contraption, BlockType, createBlock } from '@/game/contraptions';
+import { Contraption, BlockType, createBlock, blockFromData } from '@/game/contraptions';
 import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
 import { Renderer } from '@/rendering/Renderer';
 import { getTestSpawnPosition } from '@/game/terrain/MapLoader';
@@ -187,20 +187,33 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     physicsRef.current = new PhysicsEngine();
     rendererRef.current = new Renderer(canvas);
     
-    // Set up camera - center on contraption spawn area
+    // Set up camera - center between the two contraptions
     const spawnPos = getTestSpawnPosition();
     const camera = rendererRef.current.camera;
     camera.x = spawnPos.x;
     camera.y = spawnPos.y;
     camera.zoom = 1;
     
-    // Build contraption physics at spawn position (if any blocks)
+    // Build contraption physics - spawn two facing each other
     const blocks = contraption.getAllBlocks();
     if (blocks.length > 0) {
-      const { bodies, constraints } = contraption.buildPhysics(spawnPos.x, spawnPos.y - 100);
-      bodies.forEach(body => physicsRef.current?.addBody(body));
-      constraints.forEach(constraint => physicsRef.current?.addConstraint(constraint));
-      console.log(`[Builder] Added ${bodies.length} bodies and ${constraints.length} constraints`);
+      const spacing = 300; // Distance between contraptions
+      
+      // Left contraption (facing right, direction = 1)
+      const leftContraption = new Contraption(contraption.id + '-left', contraption.name, 1);
+      contraption.getAllBlocks().forEach(b => leftContraption.addBlock(blockFromData(b.toData())));
+      const leftPhysics = leftContraption.buildPhysics(spawnPos.x - spacing, spawnPos.y - 100);
+      leftPhysics.bodies.forEach(body => physicsRef.current?.addBody(body));
+      leftPhysics.constraints.forEach(constraint => physicsRef.current?.addConstraint(constraint));
+      
+      // Right contraption (facing left, direction = -1)
+      const rightContraption = new Contraption(contraption.id + '-right', contraption.name, -1);
+      contraption.getAllBlocks().forEach(b => rightContraption.addBlock(blockFromData(b.toData())));
+      const rightPhysics = rightContraption.buildPhysics(spawnPos.x + spacing, spawnPos.y - 100);
+      rightPhysics.bodies.forEach(body => physicsRef.current?.addBody(body));
+      rightPhysics.constraints.forEach(constraint => physicsRef.current?.addConstraint(constraint));
+      
+      console.log(`[Builder] Spawned two contraptions facing each other`);
     } else {
       console.log('[Builder] No blocks placed; running empty world to show ground');
     }
@@ -250,6 +263,12 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
               onClick={() => setSelectedBlock('wheel')}
             >
               Wheel
+            </button>
+            <button 
+              className={selectedBlock === 'spike' ? 'active' : ''}
+              onClick={() => setSelectedBlock('spike')}
+            >
+              Spike
             </button>
           </div>
           

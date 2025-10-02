@@ -7,11 +7,15 @@ import Matter from 'matter-js';
 import { PHYSICS_CONSTANTS } from '@shared/constants/physics';
 import type { PhysicsBodyState, Vector2D } from '@shared/types/GameState';
 import { createMapBoundaries } from '@/game/terrain/MapLoader';
+import type { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
 
 export class PhysicsEngine {
   private engine: Matter.Engine;
   private world: Matter.World;
   private runner: Matter.Runner | null = null;
+  private bodiesToRemove: Set<Matter.Body> = new Set();
+  private constraintsToRemove: Set<Matter.Constraint> = new Set();
+  private pendingForces: Map<number, { x: number, y: number }> = new Map();
 
   constructor() {
     // Create Matter.js engine
@@ -22,11 +26,63 @@ export class PhysicsEngine {
 
     // Create world boundaries
     this.createBoundaries();
+    
+    // Set up collision detection
+    this.setupCollisionHandling();
   }
 
   private createBoundaries(): void {
     const boundaries = createMapBoundaries();
     Matter.World.add(this.world, boundaries);
+  }
+
+  private setupCollisionHandling(): void {
+    Matter.Events.on(this.engine, 'collisionStart', (event) => {
+      event.pairs.forEach(pair => {
+        const bodyA = pair.bodyA;
+        const bodyB = pair.bodyB;
+        
+        // Call onCollision callback if body has one
+        const onCollisionA = (bodyA as unknown as { onCollision?: (myBody: Matter.Body, otherBody: Matter.Body) => void }).onCollision;
+        const onCollisionB = (bodyB as unknown as { onCollision?: (myBody: Matter.Body, otherBody: Matter.Body) => void }).onCollision;
+        
+        if (onCollisionA) onCollisionA(bodyA, bodyB);
+        if (onCollisionB) onCollisionB(bodyB, bodyA);
+      });
+    });
+  }
+
+  private cleanupDeadBlocks(): void {
+    const allBodies = Matter.Composite.allBodies(this.world);
+    const allConstraints = Matter.Composite.allConstraints(this.world);
+    
+    // Find blocks with 0 health
+    allBodies.forEach(body => {
+      const block = (body as unknown as { block?: BaseBlock }).block;
+      if (block && block.health <= 0) {
+        this.bodiesToRemove.add(body);
+      }
+    });
+    
+    // Remove constraints connected to dead bodies
+    allConstraints.forEach(constraint => {
+      if (constraint.bodyA && this.bodiesToRemove.has(constraint.bodyA)) {
+        this.constraintsToRemove.add(constraint);
+      }
+      if (constraint.bodyB && this.bodiesToRemove.has(constraint.bodyB)) {
+        this.constraintsToRemove.add(constraint);
+      }
+    });
+    
+    // Remove from world
+    if (this.bodiesToRemove.size > 0) {
+      Matter.World.remove(this.world, Array.from(this.bodiesToRemove));
+      this.bodiesToRemove.clear();
+    }
+    if (this.constraintsToRemove.size > 0) {
+      Matter.World.remove(this.world, Array.from(this.constraintsToRemove) as unknown as Matter.Body);
+      this.constraintsToRemove.clear();
+    }
   }
 
   /**
@@ -36,6 +92,29 @@ export class PhysicsEngine {
     this.runner = Matter.Runner.create({
       delta: PHYSICS_CONSTANTS.FIXED_TIMESTEP,
       isFixed: true,
+    });
+    // Invoke optional per-body tick hooks so blocks can own their logic
+    Matter.Events.on(this.engine, 'beforeUpdate', () => {
+      const bodies = Matter.Composite.allBodies(this.world);
+      for (const body of bodies) {
+        const anyBody = body as unknown as { onTick?: () => void };
+        if (typeof anyBody.onTick === 'function') anyBody.onTick();
+      }
+
+      // Flush queued forces (apply at body center for stability)
+      if (this.pendingForces.size > 0) {
+        this.pendingForces.forEach((force, bodyId) => {
+          const target = bodies.find(b => b.id === bodyId);
+          if (target) {
+            Matter.Body.applyForce(target, target.position, force);
+          }
+        });
+        this.pendingForces.clear();
+      }
+    });
+    // Clean up dead blocks after physics update
+    Matter.Events.on(this.engine, 'afterUpdate', () => {
+      this.cleanupDeadBlocks();
     });
     Matter.Runner.run(this.runner, this.engine);
   }
@@ -62,6 +141,8 @@ export class PhysicsEngine {
    */
   addBody(body: Matter.Body): void {
     Matter.World.add(this.world, body);
+    // Tag with engine reference for convenience (used by blocks to queue forces)
+    (body as unknown as { physics?: PhysicsEngine }).physics = this;
   }
 
   /**
@@ -116,6 +197,14 @@ export class PhysicsEngine {
    */
   applyForce(body: Matter.Body, force: Vector2D): void {
     Matter.Body.applyForce(body, body.position, force);
+  }
+
+  /**
+   * Queue a force to be applied on the next physics tick
+   */
+  queueForce(body: Matter.Body, force: Vector2D): void {
+    const existing = this.pendingForces.get(body.id) || { x: 0, y: 0 };
+    this.pendingForces.set(body.id, { x: existing.x + force.x, y: existing.y + force.y });
   }
 
   /**

@@ -15,7 +15,7 @@ export class CoreBlock extends BaseBlock {
     return ['top', 'right', 'bottom', 'left'];
   }
   
-  createPhysicsBodies(worldX: number, worldY: number): PhysicsSpawnResult {
+  createPhysicsBodies(worldX: number, worldY: number, _direction?: number): PhysicsSpawnResult {
     const body = Matter.Bodies.rectangle(
       worldX,
       worldY,
