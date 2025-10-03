@@ -9,6 +9,7 @@ import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 export class CoreBlock extends BaseBlock {
   constructor(id: string, gridX: number, gridY: number) {
     super(id, 'core', gridX, gridY, 100);
+    this.fragile = true;
   }
   
   getAttachmentFaces(): AttachmentDirection[] {

@@ -55,6 +55,7 @@ export function blockFromData(data: BlockData): BaseBlock {
       core.stiffness = data.stiffness;
       if (data.damage !== undefined) core.damage = data.damage;
       if (data.knockback !== undefined) core.knockback = data.knockback;
+      core.fragile = data.fragile ?? false;
       return core;
     }
     case 'simple': {
@@ -64,6 +65,7 @@ export function blockFromData(data: BlockData): BaseBlock {
       simple.stiffness = data.stiffness;
       if (data.damage !== undefined) simple.damage = data.damage;
       if (data.knockback !== undefined) simple.knockback = data.knockback;
+      simple.fragile = data.fragile ?? false;
       return simple;
     }
     case 'wheel': {
@@ -72,6 +74,7 @@ export function blockFromData(data: BlockData): BaseBlock {
       wheel.stiffness = data.stiffness;
       if (data.damage !== undefined) wheel.damage = data.damage;
       if (data.knockback !== undefined) wheel.knockback = data.knockback;
+      wheel.fragile = data.fragile ?? false;
       return wheel;
     }
     case 'spike': {
@@ -81,6 +84,7 @@ export function blockFromData(data: BlockData): BaseBlock {
       spike.stiffness = data.stiffness;
       if (data.damage !== undefined) spike.damage = data.damage;
       if (data.knockback !== undefined) spike.knockback = data.knockback;
+      spike.fragile = data.fragile ?? false;
       return spike;
     }
     case 'gray': {
@@ -89,6 +93,7 @@ export function blockFromData(data: BlockData): BaseBlock {
       gray.stiffness = data.stiffness;
       if (data.damage !== undefined) gray.damage = data.damage;
       if (data.knockback !== undefined) gray.knockback = data.knockback;
+      gray.fragile = data.fragile ?? false;
       return gray;
     }
     case 'tnt': {
@@ -98,6 +103,7 @@ export function blockFromData(data: BlockData): BaseBlock {
       tnt.stiffness = data.stiffness;
       if (data.damage !== undefined) tnt.damage = data.damage;
       if (data.knockback !== undefined) tnt.knockback = data.knockback;
+      tnt.fragile = data.fragile ?? false;
       return tnt;
     }
     default:

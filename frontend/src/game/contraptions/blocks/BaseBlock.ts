@@ -25,6 +25,7 @@ export interface BlockData {
   stiffness: number;
   damage?: number;
   knockback?: number;
+  fragile?: boolean;
 }
 
 export interface PhysicsSpawnResult {
@@ -43,6 +44,7 @@ export abstract class BaseBlock {
   stiffness: number;
   damage: number; // damage dealt on contact
   knockback: number; // force magnitude applied on contact
+  fragile: boolean;
   
   constructor(id: string, type: BlockType, gridX: number, gridY: number, maxHealth: number = 100) {
     this.id = id;
@@ -54,6 +56,7 @@ export abstract class BaseBlock {
     this.stiffness = BUILDER_CONSTANTS.ATTACHMENT_STIFFNESS;
     this.damage = 2;
     this.knockback = 0.01;
+    this.fragile = false;
   }
   
   /**
@@ -78,8 +81,31 @@ export abstract class BaseBlock {
     const myTeam = (myBody as unknown as { team?: string }).team;
     const targetTeam = (otherBody as unknown as { team?: string }).team;
     
+    const relativeSpeed = Math.hypot(
+      myBody.velocity.x - otherBody.velocity.x,
+      myBody.velocity.y - otherBody.velocity.y
+    );
+    
+    if (this.fragile) {
+      let damageAmount = relativeSpeed * 2;
+      if (otherBody.label && (otherBody.label === 'ground' || otherBody.label.includes('wall'))) {
+        damageAmount += 1;
+      }
+      if (damageAmount > 0.5) {
+        this.health -= damageAmount;
+        const effects = (myBody as unknown as { effects?: EffectsInterface }).effects;
+        if (effects) {
+          const impactX = (myBody.position.x + otherBody.position.x) / 2;
+          const impactY = (myBody.position.y + otherBody.position.y) / 2;
+          effects.spawnImpactParticles(impactX, impactY, damageAmount, myBody.velocity.x, myBody.velocity.y);
+          effects.spawnDamageNumber(myBody.position.x, myBody.position.y - 15, damageAmount);
+          effects.applyBlockTint(myBody.id, damageAmount);
+        }
+      }
+    }
+    
     // Only damage if from different contraption AND different team (no friendly fire)
-    if (targetBlock && myContraptionId !== targetContraptionId && myTeam !== targetTeam) {
+    if (!this.fragile && targetBlock && myContraptionId !== targetContraptionId && myTeam !== targetTeam) {
       // Apply damage scaled by attacker's linear speed
       const speed = Math.hypot(myBody.velocity.x, myBody.velocity.y);
       let damageAmount = this.damage * speed;
@@ -105,32 +131,42 @@ export abstract class BaseBlock {
         // Apply red tint to damaged block
         effects.applyBlockTint(otherBody.id, damageAmount);
       }
-
-      // Compute normalized separation vector from myBody to otherBody
-      const dx = otherBody.position.x - myBody.position.x;
-      const dy = otherBody.position.y - myBody.position.y;
-      const len = Math.hypot(dx, dy) || 1;
-      const nx = dx / len;
-      const ny = dy / len;
-
-      // Use tunable knockback magnitude
-      const fx = nx * this.knockback;
-      const fy = ny * this.knockback;
-
-      // Ensure bodies are awake so forces take effect immediately
-      Matter.Sleeping.set(myBody, false);
-      Matter.Sleeping.set(otherBody, false);
-
-      const myPhysics = (myBody as unknown as { physics?: { queueForce: (b: Matter.Body, f: Matter.Vector) => void } }).physics;
-      const otherPhysics = (otherBody as unknown as { physics?: { queueForce: (b: Matter.Body, f: Matter.Vector) => void } }).physics;
-      if (myPhysics && otherPhysics) {
-        myPhysics.queueForce(myBody, { x: -fx, y: -fy });
-        otherPhysics.queueForce(otherBody, { x: fx, y: fy });
-      } else {
-        Matter.Body.applyForce(myBody, myBody.position, { x: -fx, y: -fy });
-        Matter.Body.applyForce(otherBody, otherBody.position, { x: fx, y: fy });
-      }
     }
+
+    // Compute normalized separation vector from myBody to otherBody
+    const dx = otherBody.position.x - myBody.position.x;
+    const dy = otherBody.position.y - myBody.position.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = dx / len;
+    const ny = dy / len;
+
+    // Use tunable knockback magnitude
+    const fx = nx * this.knockback;
+    const fy = ny * this.knockback;
+
+    // // Amplify knockback 100x for fragile blocks hitting terrain
+    // if (this.fragile && otherBody.label && (otherBody.label === 'ground' || otherBody.label.includes('wall'))) {
+    //   console.log('Fragile terrain collision detected:', otherBody.label, 'nx:', nx, 'ny:', ny, 'base fx/fy:', fx, fy);
+    //   fx *= 1000000;
+    //   fy *= 1000000;
+    //   console.log('After amplification fx/fy:', fx, fy);
+    // }
+
+    // Ensure bodies are awake so forces take effect immediately
+    Matter.Sleeping.set(myBody, false);
+    Matter.Sleeping.set(otherBody, false);
+
+    const myPhysics = (myBody as unknown as { physics?: { queueForce: (b: Matter.Body, f: Matter.Vector) => void } }).physics;
+    const otherPhysics = (otherBody as unknown as { physics?: { queueForce: (b: Matter.Body, f: Matter.Vector) => void } }).physics;
+    if (myPhysics && otherPhysics) {
+      console.log('Using queueForce for both bodies');
+      myPhysics.queueForce(myBody, { x: -fx, y: -fy });
+      otherPhysics.queueForce(otherBody, { x: fx, y: fy });
+    } else  if (myPhysics) {
+      console.log('Using applyForce (likely terrain, otherPhysics undefined)');
+      myPhysics.queueForce(myBody, { x: -fx, y: -fy });
+    }
+    console.log('Knockback forces applied to myBody:', -fx, -fy);
   }
 
   // Optional: Override in subclasses for resistance
@@ -241,6 +277,7 @@ export abstract class BaseBlock {
       stiffness: this.stiffness,
       damage: this.damage,
       knockback: this.knockback,
+      fragile: this.fragile,
     };
   }
 }

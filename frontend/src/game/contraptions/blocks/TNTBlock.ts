@@ -11,6 +11,7 @@ export class TNTBlock extends BaseBlock {
     super(id, 'tnt' as any, gridX, gridY, 25);
     this.damage = 0;
     this.knockback = 0;
+    this.fragile = true;
   }
 
   getAttachmentFaces(): AttachmentDirection[] {
