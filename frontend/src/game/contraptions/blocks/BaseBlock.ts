@@ -5,8 +5,9 @@
 import Matter from 'matter-js';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 
-export type BlockType = 'core' | 'simple' | 'wheel' | 'spike' | 'gray';
+export type BlockType = 'core' | 'simple' | 'wheel' | 'spike' | 'gray' | 'tnt';
 export type AttachmentDirection = 'top' | 'right' | 'bottom' | 'left';
+export type DamageType = 'sharp' | 'blunt' | 'blast';
 
 interface EffectsInterface {
   spawnImpactParticles: (x: number, y: number, damage: number, vx: number, vy: number) => void;
@@ -68,8 +69,9 @@ export abstract class BaseBlock {
   /**
    * Default collision behavior: damage the other block if from a different team
    * and apply a brief separating knockback force to both bodies.
+   * Accepts a damageType for resistance logic. Use 'sharp' for spikes, 'blunt' for block collisions.
    */
-  onCollision(myBody: Matter.Body, otherBody: Matter.Body): void {
+  onCollision(myBody: Matter.Body, otherBody: Matter.Body, damageType: DamageType = 'blunt'): void {
     const targetBlock = (otherBody as unknown as { block?: BaseBlock }).block;
     const myContraptionId = (myBody as unknown as { contraptionId?: string }).contraptionId;
     const targetContraptionId = (otherBody as unknown as { contraptionId?: string }).contraptionId;
@@ -80,7 +82,11 @@ export abstract class BaseBlock {
     if (targetBlock && myContraptionId !== targetContraptionId && myTeam !== targetTeam) {
       // Apply damage scaled by attacker's linear speed
       const speed = Math.hypot(myBody.velocity.x, myBody.velocity.y);
-      const damageAmount = this.damage * speed;
+      let damageAmount = this.damage * speed;
+      // Resistance logic will be handled in subclasses
+      if (typeof targetBlock.applyResistance === 'function') {
+        damageAmount = targetBlock.applyResistance(damageAmount, damageType);
+      }
       targetBlock.health -= damageAmount;
 
       // Spawn visual effects
@@ -126,6 +132,9 @@ export abstract class BaseBlock {
       }
     }
   }
+
+  // Optional: Override in subclasses for resistance
+  applyResistance?(amount: number, type: DamageType): number;
   
   /**
    * Get the half-height for connection points (allows wheels to have different attachment height)

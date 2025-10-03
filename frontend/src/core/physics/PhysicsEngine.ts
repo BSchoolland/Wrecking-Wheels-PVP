@@ -5,6 +5,7 @@
 
 import Matter from 'matter-js';
 import { PHYSICS_CONSTANTS } from '@shared/constants/physics';
+import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 import type { PhysicsBodyState, Vector2D } from '@shared/types/GameState';
 import { createMapBoundaries } from '@/game/terrain/MapLoader';
 import type { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
@@ -103,11 +104,71 @@ export class PhysicsEngine {
     const allBodies = Matter.Composite.allBodies(this.world);
     const allConstraints = Matter.Composite.allConstraints(this.world);
     const affectedContraptions = new Set<string>();
+    const explodedBlocks = new Set<string>();
     
     // Find blocks with 0 health
     allBodies.forEach(body => {
       const block = (body as unknown as { block?: BaseBlock }).block;
       if (block && block.health <= 0) {
+        // Trigger TNT explosion once per block
+        if ((block as unknown as { type?: string }).type === 'tnt' && !explodedBlocks.has(block.id)) {
+          explodedBlocks.add(block.id);
+          const center = body.position;
+          const BLAST_RADIUS = BUILDER_CONSTANTS.GRID_SIZE * 5;
+          const INNER_RADIUS = BLAST_RADIUS / 2;
+          const DAMAGE_OUTER = 50;
+          const DAMAGE_INNER = 150;
+          const KNOCKBACK_OUTER = 0.06; // strong push
+          const KNOCKBACK_INNER = 0.14; // even stronger push
+
+          allBodies.forEach(targetBody => {
+            if (targetBody === body) return;
+            const targetBlock = (targetBody as unknown as { block?: BaseBlock }).block;
+            if (!targetBlock || targetBlock.health <= 0) return;
+
+            const dx = targetBody.position.x - center.x;
+            const dy = targetBody.position.y - center.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist <= BLAST_RADIUS && dist > 0) {
+              const nx = dx / dist;
+              const ny = dy / dist;
+              const isInner = dist <= INNER_RADIUS;
+              const damage = isInner ? DAMAGE_INNER : DAMAGE_OUTER;
+              const knock = isInner ? KNOCKBACK_INNER : KNOCKBACK_OUTER;
+
+              // Apply damage ignoring team/contraption, but allow resistance
+              let finalDamage = damage;
+              if (typeof targetBlock.applyResistance === 'function') {
+                finalDamage = targetBlock.applyResistance(damage, 'blast');
+              }
+              targetBlock.health -= finalDamage;
+
+              // Wake and apply radial impulse
+              Matter.Sleeping.set(targetBody, false);
+              const physics = (targetBody as unknown as { physics?: { queueForce: (b: Matter.Body, f: Matter.Vector) => void } }).physics;
+              const force = { x: nx * knock, y: ny * knock };
+              if (physics) {
+                physics.queueForce(targetBody, force);
+              } else {
+                Matter.Body.applyForce(targetBody, targetBody.position, force);
+              }
+
+              // Effect feedback
+              const effects = (body as unknown as { effects?: EffectManager }).effects;
+              if (effects) {
+                effects.spawnImpactParticles(center.x, center.y, finalDamage, nx * knock, ny * knock);
+                effects.spawnDamageNumber(targetBody.position.x, targetBody.position.y - 15, finalDamage);
+              }
+            }
+          });
+
+          // Single explosion flash at center (200ms)
+          const effects = (body as unknown as { effects?: EffectManager }).effects;
+          if (effects) {
+            effects.spawnExplosionFlash(center.x, center.y, BLAST_RADIUS, 200);
+          }
+        }
+
         this.bodiesToRemove.add(body);
         const contraptionId = (body as unknown as { contraptionId?: string }).contraptionId;
         if (contraptionId) affectedContraptions.add(contraptionId);

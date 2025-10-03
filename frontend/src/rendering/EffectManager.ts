@@ -23,6 +23,9 @@ interface DamageNumber {
   damage: number;
   life: number; // 0-1
   vy: number;
+  fontSize?: number;
+  color?: string;
+  vx?: number;
 }
 
 interface BlockTint {
@@ -42,6 +45,17 @@ interface GhostBlock {
   vy: number;
 }
 
+interface ExplosionCircle {
+  x: number;
+  y: number;
+  radius: number; // circle visual radius
+  color: string;
+  elapsed: number; // seconds since creation
+  delay: number; // seconds to wait before showing (stagger)
+  appearDuration: number; // seconds at full alpha (default 0.2s)
+  fadeDuration: number; // seconds to fade out (0.4-0.6s)
+}
+
 const PARTICLE_POOL_SIZE = 200;
 const DAMAGE_NUMBER_POOL_SIZE = 50;
 
@@ -50,10 +64,12 @@ export class EffectManager {
   private damageNumbers: DamageNumber[] = [];
   private blockTints: Map<number, BlockTint> = new Map();
   private ghostBlocks: GhostBlock[] = [];
+  private explosions: ExplosionCircle[] = [];
   
   // Object pools for performance
   private particlePool: Particle[] = [];
   private damageNumberPool: DamageNumber[] = [];
+  explosionFlashSizeScale: number = 2;
 
   constructor() {
     // Pre-allocate pools
@@ -62,6 +78,43 @@ export class EffectManager {
     }
     for (let i = 0; i < DAMAGE_NUMBER_POOL_SIZE; i++) {
       this.damageNumberPool.push({ x: 0, y: 0, damage: 0, life: 0, vy: 0 });
+    }
+  }
+
+  /**
+   * Spawn an explosion burst of red circles.
+   * Creates 15 circles randomly positioned within the given radius.
+   * Each holds at full alpha for ~200ms, then fades over 400–600ms.
+   */
+  spawnExplosionFlash(x: number, y: number, radius: number, durationMs: number = 200): void {
+    const appearSeconds = (durationMs / 1000) || 0.2;
+    const count = 15;
+    for (let i = 0; i < count; i++) {
+      // Random point inside circle (uniform by area)
+      const r = Math.sqrt(Math.random()) * radius;
+      const theta = Math.random() * Math.PI * 2;
+      const cx = x + Math.cos(theta) * r;
+      const cy = y + Math.sin(theta) * r;
+      // Larger circle size, biased bigger near center
+      const size = this.explosionFlashSizeScale * Math.max(16, (1 - r / radius) * 40 + 20 + Math.random() * 20);
+      const fadeSeconds = 0.4 + Math.random() * 0.2; // 0.4–0.6s
+      const delay = Math.random() * appearSeconds; // stagger up to 200ms
+      // Interpolate color between orange (255,165,0) and red (229,57,53)
+      const t = Math.random();
+      const rCol = Math.round(255 * (1 - t) + 229 * t);
+      const gCol = Math.round(165 * (1 - t) + 57 * t);
+      const bCol = Math.round(0 * (1 - t) + 53 * t);
+      const color = `rgb(${rCol},${gCol},${bCol})`;
+      this.explosions.push({
+        x: cx,
+        y: cy,
+        radius: size,
+        color,
+        elapsed: 0,
+        delay,
+        appearDuration: appearSeconds,
+        fadeDuration: fadeSeconds,
+      });
     }
   }
 
@@ -94,13 +147,21 @@ export class EffectManager {
   spawnDamageNumber(x: number, y: number, damage: number): void {
     const num = this.damageNumberPool.pop();
     if (!num) return;
-    
     num.x = x;
     num.y = y;
     num.damage = Math.round(damage);
     num.life = 1;
-    num.vy = -1; // Float upward
-    this.damageNumbers.push(num);
+    // Size and color scale with damage
+    const t = Math.min(1, damage / 150); // 0 = small, 1 = big
+    num.fontSize = 14 + t * 18; // 14–32px
+    const r = Math.round(255 * t + 255 * (1 - t)); // always 255
+    const g = Math.round(255 * (1 - t) + 57 * t); // 255 to 57
+    const b = Math.round(255 * (1 - t) + 53 * t); // 255 to 53
+    num.color = `rgb(${r},${g},${b})`;
+    // Random movement
+    num.vx = (Math.random() - 0.5) * 1.5;
+    num.vy = -1.2 + Math.random() * -0.5;
+    // this.damageNumbers.push(num);
   }
 
   /**
@@ -175,9 +236,9 @@ export class EffectManager {
     // Update damage numbers
     for (let i = this.damageNumbers.length - 1; i >= 0; i--) {
       const n = this.damageNumbers[i];
-      n.y += n.vy;
+      n.x += n.vx || 0;
+      n.y += n.vy || 0;
       n.life -= dt / 1.5; // 1.5 second lifetime
-      
       if (n.life <= 0) {
         this.damageNumbers.splice(i, 1);
         this.damageNumberPool.push(n);
@@ -207,12 +268,37 @@ export class EffectManager {
         this.ghostBlocks.splice(i, 1);
       }
     }
+
+    // Update explosion circles
+    for (let i = this.explosions.length - 1; i >= 0; i--) {
+      const e = this.explosions[i];
+      e.elapsed += dt;
+      const visibleTime = e.elapsed - e.delay;
+      if (visibleTime >= e.appearDuration + e.fadeDuration) this.explosions.splice(i, 1);
+    }
   }
 
   /**
    * Render all effects
    */
   render(ctx: CanvasRenderingContext2D): void {
+    // Render explosion circles
+    this.explosions.forEach(e => {
+      const t = e.elapsed - e.delay;
+      if (t < 0) return; // not yet spawned
+      let alpha = 1;
+      if (t > e.appearDuration) {
+        const k = (t - e.appearDuration) / e.fadeDuration;
+        alpha = Math.max(0, 1 - k);
+      }
+      ctx.fillStyle = e.color;
+      ctx.globalAlpha = alpha;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, e.radius, 0, Math.PI * 2);
+      ctx.fill();
+    });
+    ctx.globalAlpha = 1;
+
     // Render particles
     this.particles.forEach(p => {
       ctx.fillStyle = p.color;
@@ -225,7 +311,8 @@ export class EffectManager {
     ctx.font = 'bold 14px Arial';
     ctx.textAlign = 'center';
     this.damageNumbers.forEach(n => {
-      ctx.fillStyle = '#fff';
+      ctx.font = `bold ${n.fontSize || 14}px Arial`;
+      ctx.fillStyle = n.color || '#fff';
       ctx.strokeStyle = '#000';
       ctx.lineWidth = 3;
       ctx.globalAlpha = n.life;
@@ -354,6 +441,7 @@ export class EffectManager {
     this.damageNumbers = [];
     this.blockTints.clear();
     this.ghostBlocks = [];
+    this.explosions = [];
   }
 }
 

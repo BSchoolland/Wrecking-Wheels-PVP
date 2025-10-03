@@ -312,6 +312,12 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
             >
               Gray
             </button>
+            <button 
+              className={selectedBlock === 'tnt' ? 'active' : ''}
+              onClick={() => setSelectedBlock('tnt')}
+            >
+              TNT
+            </button>
           </div>
           
           <canvas

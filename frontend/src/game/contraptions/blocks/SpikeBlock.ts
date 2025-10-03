@@ -10,7 +10,7 @@ export class SpikeBlock extends BaseBlock {
   static readonly BODY_OFFSET = -5; // Shift to align attachment face with grid
   
   constructor(id: string, gridX: number, gridY: number) {
-    super(id, 'spike', gridX, gridY, 1000); // 10x health since it's a weapon
+    super(id, 'spike', gridX, gridY, 100);
     // Spikes hit harder and knock back more by default
     this.damage = 25;
     this.knockback = 0.02;
@@ -68,6 +68,13 @@ export class SpikeBlock extends BaseBlock {
       constraints: [],
       primaryBody: body,
     };
+  }
+
+  applyResistance(amount: number, type: import('./BaseBlock').DamageType): number {
+    if (type === 'sharp' || type === 'blunt') {
+      return amount * 0.1;
+    }
+    return amount;
   }
 }
 

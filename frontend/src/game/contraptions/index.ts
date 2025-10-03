@@ -9,6 +9,7 @@ export { SimpleBlock } from './blocks/SimpleBlock';
 export { WheelBlock } from './blocks/WheelBlock';
 export { SpikeBlock } from './blocks/SpikeBlock';
 export { GrayBlock } from './blocks/GrayBlock';
+export { TNTBlock } from './blocks/TNTBlock';
 export { Contraption } from './Contraption';
 export type { ContraptionSaveData } from './Contraption';
 
@@ -19,6 +20,7 @@ import { SimpleBlock } from './blocks/SimpleBlock';
 import { WheelBlock } from './blocks/WheelBlock';
 import { SpikeBlock } from './blocks/SpikeBlock';
 import { GrayBlock } from './blocks/GrayBlock';
+import { TNTBlock } from './blocks/TNTBlock';
 
 export function createBlock(type: BlockType, gridX: number, gridY: number): BaseBlock {
   const id = `${type}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -34,6 +36,8 @@ export function createBlock(type: BlockType, gridX: number, gridY: number): Base
       return new SpikeBlock(id, gridX, gridY);
     case 'gray':
       return new GrayBlock(id, gridX, gridY);
+    case 'tnt':
+      return new TNTBlock(id, gridX, gridY);
     default:
       throw new Error(`Unknown block type: ${type}`);
   }
@@ -86,6 +90,15 @@ export function blockFromData(data: BlockData): BaseBlock {
       if (data.damage !== undefined) gray.damage = data.damage;
       if (data.knockback !== undefined) gray.knockback = data.knockback;
       return gray;
+    }
+    case 'tnt': {
+      const tnt = new TNTBlock(data.id, data.gridX, data.gridY);
+      tnt.maxHealth = data.maxHealth ?? 25;
+      tnt.health = data.health;
+      tnt.stiffness = data.stiffness;
+      if (data.damage !== undefined) tnt.damage = data.damage;
+      if (data.knockback !== undefined) tnt.knockback = data.knockback;
+      return tnt;
     }
     default:
       throw new Error(`Unknown block type: ${data.type}`);

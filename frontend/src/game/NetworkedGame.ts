@@ -32,13 +32,14 @@ interface SerializableBody {
 }
 
 interface EffectEvent {
-  type: 'impact' | 'damage' | 'tint';
+  type: 'impact' | 'damage' | 'tint' | 'explosion';
   x: number;
   y: number;
   damage?: number;
   bodyId?: number;
   vx?: number;
   vy?: number;
+  radius?: number;
 }
 
 interface NetworkSnapshot {
@@ -140,6 +141,13 @@ export class NetworkedGame {
     this.renderer.effects.applyBlockTint = (bodyId, damage) => {
       originalTint(bodyId, damage);
       this.effectEvents.push({ type: 'tint', x: 0, y: 0, bodyId, damage });
+    };
+
+    // Capture explosions
+    const originalExplosion = this.renderer.effects.spawnExplosionFlash.bind(this.renderer.effects);
+    this.renderer.effects.spawnExplosionFlash = (x: number, y: number, radius: number, durationMs?: number) => {
+      originalExplosion(x, y, radius, durationMs);
+      this.effectEvents.push({ type: 'explosion', x, y, radius });
     };
   }
 
@@ -249,6 +257,9 @@ export class NetworkedGame {
             if (effect.bodyId !== undefined) {
               this.renderer.effects.applyBlockTint(effect.bodyId, effect.damage || 0);
             }
+            break;
+          case 'explosion':
+            this.renderer.effects.spawnExplosionFlash(effect.x, effect.y, effect.radius || 40, 200);
             break;
         }
       });
