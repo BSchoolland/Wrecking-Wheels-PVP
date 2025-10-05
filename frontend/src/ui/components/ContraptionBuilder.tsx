@@ -22,7 +22,7 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
   const [isTesting, setIsTesting] = useState(false);
   const [showLoadModal, setShowLoadModal] = useState(false);
   const [isMouseDown, setIsMouseDown] = useState(false);
-  const [mouseButton, setMouseButton] = useState<'left' | 'right' | null>(null);
+  const [mouseButton, setMouseButton] = useState<'left' | 'right' | undefined>(undefined);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const builderCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -41,7 +41,7 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     if (!canvas) return;
     
     setIsMouseDown(true);
-    let buttonType: 'left' | 'right' | null = null;
+    let buttonType: 'left' | 'right' | undefined = undefined;
     if (e.button === 0) {
       buttonType = 'left';
       setMouseButton('left');
@@ -56,10 +56,10 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     }
   };
 
-  const handleGridMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const handleGridMouseUp = (_e: React.MouseEvent<HTMLCanvasElement>) => {
     if (isTesting) return;
     setIsMouseDown(false);
-    setMouseButton(null);
+    setMouseButton(undefined);
   };
 
   const handleGridMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -223,9 +223,11 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
 
   // Save to localStorage
   const saveContraption = () => {
+    const name = window.prompt('Enter a name for your contraption:', contraption.name) || contraption.name;
+    contraption.name = name;
     const saved = contraption.save();
     localStorage.setItem(`contraption-${saved.id}`, JSON.stringify(saved));
-    alert('Contraption saved!');
+    alert(`Contraption '${name}' saved!`);
   };
 
   // Get all saved contraptions

@@ -5,6 +5,7 @@
 
 import type { GameState } from '@shared/types/GameState';
 import { WORLD_BOUNDS } from '@shared/constants/physics';
+import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 import { Camera } from '@/core/Camera';
 import { EffectManager } from './EffectManager';
 import type { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
@@ -154,8 +155,16 @@ export class Renderer {
     bodies.forEach(body => {
       this.ctx.save();
 
+      // Early exit for destroyed bases
+      const renderOpts = body.render as any;
+      const hp = renderOpts?.healthPercent;
+      if (body.label?.includes('base-') && hp !== undefined && hp <= 0) {
+        this.ctx.restore();
+        return;
+      }
+
       // Get fill color from render options or use default
-      const fillStyle = (body.render as Matter.IBodyRenderOptions)?.fillStyle ||
+      const fillStyle = renderOpts?.fillStyle ||
         (body.isStatic ? '#555555' : '#3498db');
 
       this.ctx.fillStyle = fillStyle;
@@ -214,10 +223,10 @@ export class Renderer {
 
       // Render damage cracks (host or client): compute healthPercent from available source
       const block = (body as unknown as { block?: BaseBlock }).block;
-      const hp = block
+      let crackHp: number | undefined = block
         ? Math.max(0, Math.min(1, block.health / block.maxHealth))
-        : (body.render as Matter.IBodyRenderOptions & { healthPercent?: number })?.healthPercent;
-      this.effects.renderDamageCracksByPercent(this.ctx, body, hp);
+        : renderOpts?.healthPercent;
+      this.effects.renderDamageCracksByPercent(this.ctx, body, crackHp);
 
       this.ctx.restore();
     });
@@ -229,6 +238,52 @@ export class Renderer {
     this.effects.render(this.ctx);
 
     this.resetCamera();
+  }
+
+  renderBaseHealthbars(hostHp: number, clientHp: number): void {
+    this.setupCamera();
+
+    const BASE_SIZE = BUILDER_CONSTANTS.GRID_SIZE * 3;
+    const BASE_HEIGHT = BASE_SIZE * 3;
+    const BASE_OFFSET_RATIO = 0.15;
+    const leftBaseX = WORLD_BOUNDS.WIDTH * BASE_OFFSET_RATIO;
+    const rightBaseX = WORLD_BOUNDS.WIDTH * (1 - BASE_OFFSET_RATIO);
+    const groundY = WORLD_BOUNDS.HEIGHT + 25;
+    const baseY = groundY - 60 - BASE_SIZE;
+    const topOfBaseY = baseY - BASE_HEIGHT / 2;
+    const healthbarY = topOfBaseY - 20;
+    const healthbarHeight = 10;
+    const healthbarWidth = BASE_SIZE;
+
+    // Host base (left)
+    if (hostHp > 0) {
+      this.drawHealthbar(leftBaseX, healthbarY, healthbarWidth, healthbarHeight, hostHp / 10);
+    }
+
+    // Client base (right)
+    if (clientHp > 0) {
+      this.drawHealthbar(rightBaseX, healthbarY, healthbarWidth, healthbarHeight, clientHp / 10);
+    }
+
+    this.resetCamera();
+  }
+
+  private drawHealthbar(x: number, y: number, width: number, height: number, percent: number): void {
+    if (percent <= 0) return; // Already checked outside, but safe
+
+    // Background
+    this.ctx.fillStyle = '#333333';
+    this.ctx.fillRect(x - width / 2, y, width, height);
+
+    // Health fill
+    const fillWidth = width * Math.max(0, Math.min(1, percent));
+    this.ctx.fillStyle = '#4CAF50';
+    this.ctx.fillRect(x - width / 2, y, fillWidth, height);
+
+    // Border
+    this.ctx.strokeStyle = '#000000';
+    this.ctx.lineWidth = 2;
+    this.ctx.strokeRect(x - width / 2, y, width, height);
   }
 
   /**

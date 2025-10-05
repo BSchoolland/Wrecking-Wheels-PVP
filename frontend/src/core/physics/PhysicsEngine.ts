@@ -4,7 +4,7 @@
  */
 
 import Matter from 'matter-js';
-import { PHYSICS_CONSTANTS } from '@shared/constants/physics';
+import { PHYSICS_CONSTANTS, WORLD_BOUNDS } from '@shared/constants/physics';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 import type { PhysicsBodyState, Vector2D } from '@shared/types/GameState';
 import { createMapBoundaries } from '@/game/terrain/MapLoader';
@@ -26,6 +26,9 @@ export class PhysicsEngine {
   private contraptions: Map<string, ContraptionLike> = new Map();
   private effects: EffectManager | null = null;
   private activeCollisions: Map<string, number> = new Map(); // Track collision start times
+  private gameOver = false;
+  private baseHost?: (Matter.Body & { baseHp?: number; ownerId?: string });
+  private baseClient?: (Matter.Body & { baseHp?: number; ownerId?: string });
 
   constructor() {
     // Create Matter.js engine
@@ -44,6 +47,64 @@ export class PhysicsEngine {
   private createBoundaries(): void {
     const boundaries = createMapBoundaries();
     Matter.World.add(this.world, boundaries);
+
+    // Create team bases as non-collidable translucent sensors with HP
+    const BASE_SIZE = BUILDER_CONSTANTS.GRID_SIZE * 3;
+    const BASE_HEIGHT = BASE_SIZE * 3;
+    const BASE_OFFSET_RATIO = 0.15; // 15% into the map
+    const leftBaseX = WORLD_BOUNDS.WIDTH * BASE_OFFSET_RATIO;
+    const rightBaseX = WORLD_BOUNDS.WIDTH * (1 - BASE_OFFSET_RATIO);
+    const groundY = WORLD_BOUNDS.HEIGHT + 25; // from MapLoader, ground center
+    const baseY = groundY - 60 - BASE_SIZE; // slightly above ground, adjusted for taller height
+
+    this.baseHost = Matter.Bodies.rectangle(leftBaseX, baseY, BASE_SIZE, BASE_HEIGHT, {
+      isStatic: true,
+      isSensor: true,
+      label: 'base-host',
+      render: { fillStyle: 'rgba(52,152,219,0.35)' } as unknown as Matter.IBodyRenderOptions,
+    }) as Matter.Body & { baseHp?: number; ownerId?: string };
+    this.baseHost.baseHp = 10;
+
+    this.baseClient = Matter.Bodies.rectangle(rightBaseX, baseY, BASE_SIZE, BASE_HEIGHT, {
+      isStatic: true,
+      isSensor: true,
+      label: 'base-client',
+      render: { fillStyle: 'rgba(231,76,60,0.35)' } as unknown as Matter.IBodyRenderOptions,
+    }) as Matter.Body & { baseHp?: number; ownerId?: string };
+    this.baseClient.baseHp = 10;
+
+    const handleBaseCollision = (baseBody: Matter.Body & { baseHp?: number; ownerId?: string }, other: Matter.Body) => {
+      if (this.gameOver) return;
+      const otherBlock = (other as unknown as { block?: { type?: string; health?: number } }).block;
+      const otherOwner = (other as unknown as { ownerId?: string }).ownerId;
+      if (!otherBlock || otherBlock.type !== 'core') return;
+      // Ignore same owner if known
+      if (otherOwner && baseBody.ownerId && otherOwner === baseBody.ownerId) return;
+      // Kill the core
+      if (typeof otherBlock.health === 'number') {
+        otherBlock.health = 0;
+      }
+      // Decrement base HP once per contact event
+      if (typeof baseBody.baseHp === 'number' && baseBody.baseHp > 0) {
+        baseBody.baseHp -= 1;
+        if (baseBody.baseHp <= 0) {
+          this.gameOver = true;
+          const bodies = Matter.Composite.allBodies(this.world);
+          bodies.forEach(b => {
+            const bOwner = (b as unknown as { ownerId?: string }).ownerId;
+            const block = (b as unknown as { block?: { health?: number } }).block;
+            if (block && typeof block.health === 'number' && bOwner && baseBody.ownerId && bOwner === baseBody.ownerId) {
+              block.health = 0;
+            }
+          });
+        }
+      }
+    };
+
+    (this.baseHost as unknown as { onCollision?: (my: Matter.Body, other: Matter.Body) => void }).onCollision = (my, other) => handleBaseCollision(this.baseHost!, other);
+    (this.baseClient as unknown as { onCollision?: (my: Matter.Body, other: Matter.Body) => void }).onCollision = (my, other) => handleBaseCollision(this.baseClient!, other);
+
+    Matter.World.add(this.world, [this.baseHost, this.baseClient]);
   }
 
   private setupCollisionHandling(): void {
@@ -369,5 +430,21 @@ export class PhysicsEngine {
     this.stop();
     Matter.World.clear(this.world, false);
     Matter.Engine.clear(this.engine);
+  }
+
+  isGameOver(): boolean {
+    return this.gameOver;
+  }
+
+  setBaseOwner(side: 'host' | 'client', ownerId: string): void {
+    if (side === 'host' && this.baseHost) (this.baseHost as unknown as { ownerId?: string }).ownerId = ownerId;
+    if (side === 'client' && this.baseClient) (this.baseClient as unknown as { ownerId?: string }).ownerId = ownerId;
+  }
+
+  public getBaseHp(side: 'host' | 'client'): number {
+    if (side === 'host') {
+      return this.baseHost?.baseHp ?? 10;
+    }
+    return this.baseClient?.baseHp ?? 10;
   }
 }

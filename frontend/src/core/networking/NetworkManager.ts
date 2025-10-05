@@ -311,12 +311,16 @@ export class NetworkManager {
    */
   disconnect(): void {
     if (this.signalingWs) {
-      this.signalingWs.send(JSON.stringify({ type: 'leave-lobby' }));
-      this.signalingWs.close();
+      try {
+        if (this.signalingWs.readyState === WebSocket.OPEN) {
+          this.signalingWs.send(JSON.stringify({ type: 'leave-lobby' }));
+        }
+      } catch {}
+      try { this.signalingWs.close(); } catch {}
       this.signalingWs = null;
     }
 
-    this.peerConnection?.close();
+    try { this.peerConnection?.close(); } catch {}
     this.peerConnection = null;
     this.connectionState = 'disconnected';
   }

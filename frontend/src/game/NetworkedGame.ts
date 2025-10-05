@@ -11,6 +11,7 @@ import type * as Matter from 'matter-js';
 import { Contraption, blockFromData } from '@/game/contraptions';
 import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
 import type { BlockData } from '@/game/contraptions/blocks/BaseBlock';
+import { WORLD_BOUNDS } from '@shared/constants/physics';
 
 // Extended Matter.js types for our use case
 interface ExtendedBody extends Matter.Body {
@@ -47,6 +48,9 @@ interface NetworkSnapshot {
   bodies: SerializableBody[];
   effects?: EffectEvent[];
   _receivedAt?: number;
+  baseHostHp?: number;
+  baseClientHp?: number;
+  winner?: 'host' | 'client';
 }
 
 interface NetworkedGameConfig {
@@ -55,6 +59,8 @@ interface NetworkedGameConfig {
   lobbyId: string;
   playerId: string;
   contraption: ContraptionSaveData;
+  onContraptionSpawned?: () => void;
+  onGameOver?: (winner: 'host' | 'client') => void;
 }
 
 export class NetworkedGame {
@@ -65,6 +71,7 @@ export class NetworkedGame {
   private physics: PhysicsEngine | null = null;
   private renderer: Renderer;
   private network: NetworkManager;
+  private onContraptionSpawned?: () => void;
   private savedContraption: ContraptionSaveData | null = null;
   
   private isRunning = false;
@@ -82,11 +89,18 @@ export class NetworkedGame {
   private snapshotBuffer: NetworkSnapshot[] = [];
   private interpolationDelay = 100; // ms to buffer behind for smoothness
 
+  private latestSnapshot: NetworkSnapshot | null = null;
+  private gameEnded = false;
+  private winner: 'host' | 'client' | null = null;
+  private onGameOver?: (winner: 'host' | 'client') => void;
+
   constructor(config: NetworkedGameConfig) {
     this.canvas = config.canvas;
     this.role = config.role;
     this.playerId = config.playerId;
     this.savedContraption = config.contraption;
+    this.onContraptionSpawned = config.onContraptionSpawned;
+    this.onGameOver = config.onGameOver;
     
     // Initialize renderer
     this.renderer = new Renderer(this.canvas);
@@ -99,6 +113,7 @@ export class NetworkedGame {
     if (this.role === 'host') {
       this.physics = new PhysicsEngine();
       this.physics.setEffectManager(this.renderer.effects);
+      this.physics.setBaseOwner('host', this.playerId);
       this.setupEffectCapture();
       this.physics.start();
     }
@@ -176,6 +191,7 @@ export class NetworkedGame {
         // If client, send to host
         this.network.sendCommand(command);
       }
+      if (this.onContraptionSpawned) this.onContraptionSpawned();
     });
   }
 
@@ -185,8 +201,13 @@ export class NetworkedGame {
   private handleCommand(command: GameCommand): void {
     if (this.role !== 'host' || !this.physics) return;
 
+    if (this.physics.isGameOver()) return;
+
     switch (command.type) {
       case 'spawn-box':
+        if (command.playerId !== this.playerId) {
+          this.physics.setBaseOwner('client', command.playerId);
+        }
         this.spawnContraption(command.position.x, command.position.y, command.playerId, command.contraption);
         break;
     }
@@ -204,6 +225,13 @@ export class NetworkedGame {
     // Determine team: each player gets their own team
     const team = playerId;
     
+    // Enforce 15% placement zone on each side
+    const mapWidth = WORLD_BOUNDS.WIDTH;
+    const zone = mapWidth * 0.15;
+    const clampedX = playerId === this.playerId
+      ? Math.max(0, Math.min(zone, x))
+      : Math.max(mapWidth - zone, Math.min(mapWidth, x));
+
     // Create contraption instance
     const contraption = new Contraption(
       `${contraptionData.id}-${Date.now()}`,
@@ -222,7 +250,7 @@ export class NetworkedGame {
     this.physics.registerContraption(contraption);
     
     // Build physics
-    const { bodies, constraints } = contraption.buildPhysics(x, y);
+    const { bodies, constraints } = contraption.buildPhysics(clampedX, y);
     
     // Add to physics world
     bodies.forEach(body => {
@@ -231,7 +259,7 @@ export class NetworkedGame {
     });
     constraints.forEach(constraint => this.physics!.addConstraint(constraint));
     
-    if (import.meta.env.DEV) console.log('Spawned contraption at', x, y, 'for player', playerId, 'direction', direction);
+    if (import.meta.env.DEV) console.log('Spawned contraption at', clampedX, y, 'for player', playerId, 'direction', direction);
   }
 
   /**
@@ -242,6 +270,7 @@ export class NetworkedGame {
     // Treat incoming state as a network snapshot for interpolation
     const snapshot = { ...(state as unknown as NetworkSnapshot), _receivedAt: Date.now() } as NetworkSnapshot;
     this.snapshotBuffer.push(snapshot);
+    this.latestSnapshot = snapshot;
 
     // Process effect events
     if (snapshot.effects) {
@@ -293,12 +322,23 @@ export class NetworkedGame {
           fillStyle: (body.render as Matter.IBodyRenderOptions)?.fillStyle || (body.isStatic ? '#555555' : '#3498db'),
           healthPercent: (() => {
             const block = (body as unknown as { block?: { health: number; maxHealth: number } }).block;
-            if (!block || block.maxHealth <= 0) return undefined;
-            return Math.max(0, Math.min(1, block.health / block.maxHealth));
+            if (block && block.maxHealth > 0) {
+              return Math.max(0, Math.min(1, block.health / block.maxHealth));
+            }
+            if (body.label === 'base-host') {
+              return this.physics!.getBaseHp('host') / 10;
+            }
+            if (body.label === 'base-client') {
+              return this.physics!.getBaseHp('client') / 10;
+            }
+            return undefined;
           })(),
         },
       })),
       effects: this.effectEvents.length > 0 ? [...this.effectEvents] : undefined,
+      baseHostHp: this.physics!.getBaseHp('host'),
+      baseClientHp: this.physics!.getBaseHp('client'),
+      winner: this.gameEnded && this.winner ? this.winner : undefined,
     };
     
     // Clear effect events after sending
@@ -324,6 +364,23 @@ export class NetworkedGame {
 
     const now = Date.now();
 
+    // Detect game over on host
+    if (this.role === 'host' && this.physics && !this.gameEnded && this.physics.isGameOver()) {
+      this.gameEnded = true;
+      const hostHp = this.physics.getBaseHp('host');
+      const clientHp = this.physics.getBaseHp('client');
+      let winner: 'host' | 'client' | null = null;
+      if (clientHp <= 0) {
+        winner = 'host';
+      } else if (hostHp <= 0) {
+        winner = 'client';
+      }
+      this.winner = winner;
+      if (this.onGameOver && winner) {
+        this.onGameOver(winner);
+      }
+    }
+
     // Host: sync state to client periodically
     if (this.role === 'host' && this.network.isConnected()) {
       if (now - this.lastSyncTime >= this.syncInterval) {
@@ -343,7 +400,26 @@ export class NetworkedGame {
       // Client: render interpolated snapshot
       const renderTime = now - this.interpolationDelay;
       const bodies = this.getInterpolatedBodies(renderTime);
+      
+      // Detect game over on client
+      if (this.latestSnapshot?.winner && !this.gameEnded) {
+        this.gameEnded = true;
+        if (this.onGameOver) {
+          this.onGameOver(this.latestSnapshot.winner);
+        }
+      }
+      
       this.renderer.renderPhysics(bodies as Matter.Body[]);
+    }
+
+    if (this.role === 'host' && this.physics) {
+      const hostHp = this.physics.getBaseHp('host');
+      const clientHp = this.physics.getBaseHp('client');
+      this.renderer.renderBaseHealthbars(hostHp, clientHp);
+    } else {
+      const hostHp = this.latestSnapshot?.baseHostHp ?? 10;
+      const clientHp = this.latestSnapshot?.baseClientHp ?? 10;
+      this.renderer.renderBaseHealthbars(hostHp, clientHp);
     }
 
     this.animationFrameId = requestAnimationFrame(this.gameLoop);
@@ -458,5 +534,9 @@ export class NetworkedGame {
     this.physics?.destroy();
     this.renderer.destroy();
     this.network.disconnect();
+  }
+
+  setSelectedContraption(data: ContraptionSaveData | null): void {
+    if (data) this.savedContraption = data;
   }
 }

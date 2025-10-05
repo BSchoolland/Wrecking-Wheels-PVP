@@ -18,23 +18,7 @@ export function createMapBoundaries(): Matter.Body[] {
     { isStatic: true, label: 'ground' }
   );
 
-  const leftWall = Matter.Bodies.rectangle(
-    -25,
-    WORLD_BOUNDS.HEIGHT / 2,
-    50,
-    WORLD_BOUNDS.HEIGHT,
-    { isStatic: true, label: 'left-wall' }
-  );
-
-  const rightWall = Matter.Bodies.rectangle(
-    WORLD_BOUNDS.WIDTH + 25,
-    WORLD_BOUNDS.HEIGHT / 2,
-    50,
-    WORLD_BOUNDS.HEIGHT,
-    { isStatic: true, label: 'right-wall' }
-  );
-
-  return [ground, leftWall, rightWall];
+  return [ground];
 }
 
 /**

@@ -172,14 +172,11 @@ export abstract class BaseBlock {
     const myPhysics = (myBody as unknown as { physics?: { queueForce: (b: Matter.Body, f: Matter.Vector) => void } }).physics;
     const otherPhysics = (otherBody as unknown as { physics?: { queueForce: (b: Matter.Body, f: Matter.Vector) => void } }).physics;
     if (myPhysics && otherPhysics) {
-      console.log('Using queueForce for both bodies');
       myPhysics.queueForce(myBody, { x: -fx, y: -fy });
       otherPhysics.queueForce(otherBody, { x: fx, y: fy });
     } else if (myPhysics) {
-      console.log('Using applyForce (likely terrain, otherPhysics undefined)');
       myPhysics.queueForce(myBody, { x: -fx, y: -fy });
     }
-    console.log('Knockback forces applied to myBody:', -fx, -fy);
   }
 
   // Optional: Override in subclasses for resistance

@@ -59,8 +59,8 @@ export class WheelBlock extends BaseBlock {
     );
     // Simple motor: accelerate forward until target angular velocity
     (wheel as unknown as { onTick?: () => void }).onTick = () => {
-      const TARGET_W_AVG = 6 * direction; // rad/s (direction determines spin direction)
-      const MOTOR_TORQUE = 0.01 * direction; // torque matches direction
+      const TARGET_W_AVG = 0.3 * direction; // rad/s (direction determines spin direction)
+      const MOTOR_TORQUE = 0.05 * direction; // torque matches direction
       if ((direction > 0 && wheel.angularVelocity < TARGET_W_AVG) || 
           (direction < 0 && wheel.angularVelocity > TARGET_W_AVG)) {
         (wheel as unknown as { torque?: number }).torque = ((wheel as unknown as { torque?: number }).torque || 0) + MOTOR_TORQUE;
