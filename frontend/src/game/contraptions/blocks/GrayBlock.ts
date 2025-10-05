@@ -11,6 +11,7 @@ export class GrayBlock extends BaseBlock {
     super(id, 'gray', gridX, gridY);
     this.health = 100;
     this.damage = 4;
+    this.materialCost = 0.1;
   }
   
   getAttachmentFaces(): AttachmentDirection[] {

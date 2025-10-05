@@ -55,6 +55,16 @@ export class Contraption {
     return this.getAllBlocks().find(b => b.type === 'core');
   }
   
+  getCost(): { material: number; energy: number } {
+    const blocks = this.getAllBlocks();
+    const totalMaterial = blocks.reduce((sum, b) => sum + b.materialCost, 0);
+    const totalEnergy = blocks.reduce((sum, b) => sum + b.energyCost, 0);
+    return {
+      material: Math.ceil(totalMaterial),
+      energy: Math.ceil(totalEnergy),
+    };
+  }
+  
   removeBlockAt(gridX: number, gridY: number): void {
     for (const [key, block] of this.blocks.entries()) {
       if (block.gridX === gridX && block.gridY === gridY) {

@@ -7,6 +7,8 @@ import { NetworkedGame } from '@/game/NetworkedGame';
 import { ContraptionBuilder } from '@/ui/components/ContraptionBuilder';
 import { DeckBuilder } from '@/ui/components/DeckBuilder';
 import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
+import { createBlock } from '@/game/contraptions';
+import type { BlockType } from '@/game/contraptions';
 import './App.css';
 
 const initializeDefaults = async () => {
@@ -51,6 +53,7 @@ function App() {
   const [deckQueue, setDeckQueue] = useState<ContraptionSaveData[]>([]); // remaining draw pile
   const [hand, setHand] = useState<ContraptionSaveData[]>([]);
   const [gameOver, setGameOver] = useState<string | null>(null);
+  const [resources, setResources] = useState({ material: 0, energy: 0 });
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<NetworkedGame | null>(null);
@@ -81,6 +84,63 @@ function App() {
     } catch {
       return null;
     }
+  };
+
+  const calculateCost = (contraption: ContraptionSaveData): { material: number; energy: number } => {
+    const totalMaterial = contraption.blocks.reduce((sum, b) => {
+      if (b.materialCost !== undefined) return sum + b.materialCost;
+      const block = createBlock(b.type as BlockType, 0, 0);
+      return sum + block.materialCost;
+    }, 0);
+    const totalEnergy = contraption.blocks.reduce((sum, b) => {
+      if (b.energyCost !== undefined) return sum + b.energyCost;
+      const block = createBlock(b.type as BlockType, 0, 0);
+      return sum + block.energyCost;
+    }, 0);
+    return {
+      material: Math.ceil(totalMaterial),
+      energy: Math.ceil(totalEnergy),
+    };
+  };
+
+  const renderContraptionPreview = (contraption: ContraptionSaveData): JSX.Element => {
+    if (!contraption.blocks || contraption.blocks.length === 0) {
+      return <div className="preview-empty">No blocks</div>;
+    }
+
+    const blocks = contraption.blocks;
+    const minX = Math.min(...blocks.map(b => b.gridX));
+    const maxX = Math.max(...blocks.map(b => b.gridX));
+    const minY = Math.min(...blocks.map(b => b.gridY));
+    const maxY = Math.max(...blocks.map(b => b.gridY));
+    
+    const width = maxX - minX + 1;
+    const height = maxY - minY + 1;
+    const cellSize = 12;
+
+    return (
+      <svg width={width * cellSize} height={height * cellSize} className="contraption-preview-svg">
+        {blocks.map((block, idx) => {
+          const x = (block.gridX - minX) * cellSize;
+          const y = (block.gridY - minY) * cellSize;
+          const colors: Record<string, string> = {
+            core: '#f39c12',
+            simple: '#2196f3',
+            gray: '#7f8c8d',
+            wheel: '#34495e',
+            spike: '#e74c3c',
+            tnt: '#e67e22',
+          };
+          const color = colors[block.type] || '#bdc3c7';
+          
+          return block.type === 'wheel' ? (
+            <circle key={idx} cx={x + cellSize/2} cy={y + cellSize/2} r={cellSize/2 - 1} fill={color} />
+          ) : (
+            <rect key={idx} x={x + 1} y={y + 1} width={cellSize - 2} height={cellSize - 2} fill={color} />
+          );
+        })}
+      </svg>
+    );
   };
 
   const loadDeckIds = (slot: 1 | 2 | 3): string[] => {
@@ -131,6 +191,8 @@ function App() {
 
   useEffect(() => {
     if (view === 'game' && canvasRef.current && lobbyId && selectedContraption) {
+      let resourceInterval: number | null = null;
+      
       // Create networked game instance only once per game start
       if (!gameRef.current) {
         gameRef.current = new NetworkedGame({
@@ -177,14 +239,25 @@ function App() {
         // Just update the selected contraption when switching cards
         gameRef.current.setSelectedContraption(selectedContraption);
       }
-    }
 
-    return () => {
-      if (view !== 'game' && gameRef.current) {
-        gameRef.current.destroy();
-        gameRef.current = null;
-      }
-    };
+      // Start resource polling while in game view
+      resourceInterval = setInterval(() => {
+        const res = gameRef.current?.getPlayerResources(playerId);
+        if (res) {
+          setResources(prev => (prev.material !== res.material || prev.energy !== res.energy)
+            ? { material: res.material, energy: res.energy }
+            : prev);
+        }
+      }, 50);
+
+      return () => {
+        if (resourceInterval) clearInterval(resourceInterval);
+        if (view !== 'game' && gameRef.current) {
+          gameRef.current.destroy();
+          gameRef.current = null;
+        }
+      };
+    }
   }, [view, role, lobbyId, playerId, selectedContraption]);
 
   return (
@@ -295,17 +368,44 @@ function App() {
               <span>Right/Middle Click + Drag: Pan camera</span>
               <span>Mouse Wheel: Zoom in/out</span>
             </div>
-            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-              {hand.map((c) => (
-                <button key={c.id} onClick={() => {
-                  setSelectedContraption(c);
-                  gameRef.current?.setSelectedContraption(c);
-                }} disabled={!c || selectedContraption?.id === c.id}>
-                  {c?.name || 'Empty'}
-                </button>
-              ))}
-              <span style={{ marginLeft: 8, alignSelf: 'center' }}>Deck: {deckQueue.length}</span>
+            <div className="resources-display">
+              <span style={{ fontWeight: 'bold' }}>⚙️ Material: {resources.material.toFixed(1)}/10</span>
+              <span style={{ fontWeight: 'bold' }}>⚡ Energy: {resources.energy.toFixed(1)}/10</span>
             </div>
+          </div>
+          <div className="contraption-cards-container">
+            <div className="contraption-cards">
+              {hand.map((c) => {
+                const cost = calculateCost(c);
+                const isSelected = selectedContraption?.id === c.id;
+                const canAfford = resources.material >= cost.material && resources.energy >= cost.energy;
+                
+                return (
+                  <div 
+                    key={c.id} 
+                    className={`contraption-card ${isSelected ? 'selected' : ''} ${!canAfford ? 'unaffordable' : ''}`}
+                    onClick={() => {
+                      setSelectedContraption(c);
+                      gameRef.current?.setSelectedContraption(c);
+                    }}
+                  >
+                    <div className="card-name">{c?.name || 'Empty'}</div>
+                    <div className="card-preview">
+                      {renderContraptionPreview(c)}
+                    </div>
+                    <div className="card-costs">
+                      <span className={`cost-item ${resources.material < cost.material ? 'insufficient' : ''}`}>
+                        ⚙️ {cost.material}
+                      </span>
+                      <span className={`cost-item ${resources.energy < cost.energy ? 'insufficient' : ''}`}>
+                        ⚡ {cost.energy}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="deck-counter">Deck: {deckQueue.length}</div>
             <button className="back-button" onClick={stopGame}>
               Leave Game
             </button>

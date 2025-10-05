@@ -10,6 +10,8 @@ export class CoreBlock extends BaseBlock {
   constructor(id: string, gridX: number, gridY: number) {
     super(id, 'core', gridX, gridY, 100);
     this.fragile = true;
+    this.materialCost = 0.5;
+    this.energyCost = 0.5;
   }
   
   getAttachmentFaces(): AttachmentDirection[] {

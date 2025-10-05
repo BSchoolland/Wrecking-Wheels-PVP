@@ -33,7 +33,7 @@ interface SerializableBody {
 }
 
 interface EffectEvent {
-  type: 'impact' | 'damage' | 'tint' | 'explosion';
+  type: 'impact' | 'damage' | 'tint' | 'explosion' | 'building';
   x: number;
   y: number;
   damage?: number;
@@ -41,6 +41,8 @@ interface EffectEvent {
   vx?: number;
   vy?: number;
   radius?: number;
+  durationMs?: number;
+  playerId?: string;
 }
 
 interface NetworkSnapshot {
@@ -51,6 +53,7 @@ interface NetworkSnapshot {
   baseHostHp?: number;
   baseClientHp?: number;
   winner?: 'host' | 'client';
+  resources?: { [playerId: string]: { material: number; energy: number } };
 }
 
 interface NetworkedGameConfig {
@@ -94,6 +97,16 @@ export class NetworkedGame {
   private winner: 'host' | 'client' | null = null;
   private onGameOver?: (winner: 'host' | 'client') => void;
 
+  // Cooldowns per player
+  private buildCooldowns: Map<string, number> = new Map();
+
+  // Resources per player
+  private playerResources: Map<string, { material: number; energy: number }> = new Map();
+  private lastResourceUpdate = 0;
+  // Change the resource update interval and amount
+  private resourceUpdateInterval = 200; // 0.2 seconds
+  private resourceGainPerSecond = 0.4; // units per second for both material and energy
+
   constructor(config: NetworkedGameConfig) {
     this.canvas = config.canvas;
     this.role = config.role;
@@ -101,6 +114,10 @@ export class NetworkedGame {
     this.savedContraption = config.contraption;
     this.onContraptionSpawned = config.onContraptionSpawned;
     this.onGameOver = config.onGameOver;
+    
+    // Initialize resources for this player
+    this.playerResources.set(this.playerId, { material: 0.0, energy: 0.0 });
+    this.lastResourceUpdate = Date.now();
     
     // Initialize renderer
     this.renderer = new Renderer(this.canvas);
@@ -174,6 +191,24 @@ export class NetworkedGame {
       // Only spawn on left click (button 0 or undefined)
       if (e.button !== undefined && e.button !== 0) return;
 
+      // Check if on cooldown
+      const cooldownEnd = this.buildCooldowns.get(this.playerId) || 0;
+      if (Date.now() < cooldownEnd) return;
+
+      // Check resources before spawning
+      if (!this.savedContraption) return;
+      const contraption = new Contraption('temp', 'temp');
+      this.savedContraption.blocks.forEach(blockData => {
+        const block = blockFromData(blockData as BlockData);
+        contraption.addBlock(block);
+      });
+      const cost = contraption.getCost();
+      
+      const currentResources = this.playerResources.get(this.playerId);
+      if (!currentResources || currentResources.material < cost.material || currentResources.energy < cost.energy) {
+        return;
+      }
+
       // Convert screen coordinates to world coordinates using camera
       const worldPos = this.renderer.camera.screenToWorld(e.clientX, e.clientY);
       
@@ -219,6 +254,11 @@ export class NetworkedGame {
   private spawnContraption(x: number, y: number, playerId: string, contraptionData: ContraptionData): void {
     if (!this.physics) return;
 
+    // Initialize resources for other player if not yet initialized
+    if (!this.playerResources.has(playerId)) {
+      this.playerResources.set(playerId, { material: 0.0, energy: 0.0 });
+    }
+
     // Determine direction: host faces right (1), client faces left (-1)
     const direction = playerId === this.playerId ? 1 : -1;
     
@@ -232,34 +272,71 @@ export class NetworkedGame {
       ? Math.max(0, Math.min(zone, x))
       : Math.max(mapWidth - zone, Math.min(mapWidth, x));
 
-    // Create contraption instance
-    const contraption = new Contraption(
-      `${contraptionData.id}-${Date.now()}`,
-      contraptionData.name,
-      direction,
-      team
-    );
-    
-    // Load blocks
+    // Calculate build duration and set cooldown
+    const blockCount = contraptionData.blocks.length;
+    const durationMs = 500 + blockCount * 50;
+    const buildRadius = 40 + Math.sqrt(blockCount) * 10; // Scale with contraption size
+    this.buildCooldowns.set(playerId, Date.now() + durationMs);
+
+    // Calculate and deduct resources
+    const tempContraption = new Contraption('temp', 'temp');
     contraptionData.blocks.forEach(blockData => {
       const block = blockFromData(blockData as BlockData);
-      contraption.addBlock(block);
+      tempContraption.addBlock(block);
     });
+    const cost = tempContraption.getCost();
     
-    // Register with physics engine
-    this.physics.registerContraption(contraption);
-    
-    // Build physics
-    const { bodies, constraints } = contraption.buildPhysics(clampedX, y);
-    
-    // Add to physics world
-    bodies.forEach(body => {
-      (body as ExtendedBody).ownerId = playerId;
-      this.physics!.addBody(body);
+    const currentResources = this.playerResources.get(playerId);
+    if (currentResources) {
+      currentResources.material -= cost.material;
+      currentResources.energy -= cost.energy;
+      this.playerResources.set(playerId, currentResources);
+    }
+
+    // Trigger building dust effect (for host and sync to client)
+    this.renderer.effects.spawnBuildingDust(clampedX, y, durationMs, buildRadius);
+    this.effectEvents.push({
+      type: 'building',
+      x: clampedX,
+      y,
+      durationMs,
+      radius: buildRadius,
+      playerId,
     });
-    constraints.forEach(constraint => this.physics!.addConstraint(constraint));
-    
-    if (import.meta.env.DEV) console.log('Spawned contraption at', clampedX, y, 'for player', playerId, 'direction', direction);
+
+    // Delay spawning until animation finishes
+    setTimeout(() => {
+      if (!this.physics) return;
+
+      // Create contraption instance
+      const contraption = new Contraption(
+        `${contraptionData.id}-${Date.now()}`,
+        contraptionData.name,
+        direction,
+        team
+      );
+      
+      // Load blocks
+      contraptionData.blocks.forEach(blockData => {
+        const block = blockFromData(blockData as BlockData);
+        contraption.addBlock(block);
+      });
+      
+      // Register with physics engine
+      this.physics.registerContraption(contraption);
+      
+      // Build physics
+      const { bodies, constraints } = contraption.buildPhysics(clampedX, y);
+      
+      // Add to physics world
+      bodies.forEach(body => {
+        (body as ExtendedBody).ownerId = playerId;
+        this.physics!.addBody(body);
+      });
+      constraints.forEach(constraint => this.physics!.addConstraint(constraint));
+      
+      if (import.meta.env.DEV) console.log('Spawned contraption at', clampedX, y, 'for player', playerId, 'direction', direction);
+    }, durationMs);
   }
 
   /**
@@ -271,6 +348,13 @@ export class NetworkedGame {
     const snapshot = { ...(state as unknown as NetworkSnapshot), _receivedAt: Date.now() } as NetworkSnapshot;
     this.snapshotBuffer.push(snapshot);
     this.latestSnapshot = snapshot;
+
+    // Update resources from snapshot
+    if (snapshot.resources) {
+      Object.entries(snapshot.resources).forEach(([playerId, resources]) => {
+        this.playerResources.set(playerId, resources);
+      });
+    }
 
     // Process effect events
     if (snapshot.effects) {
@@ -289,6 +373,12 @@ export class NetworkedGame {
             break;
           case 'explosion':
             this.renderer.effects.spawnExplosionFlash(effect.x, effect.y, effect.radius || 40, 200);
+            break;
+          case 'building':
+            this.renderer.effects.spawnBuildingDust(effect.x, effect.y, effect.durationMs || 500, effect.radius || 50);
+            if (effect.playerId) {
+              this.buildCooldowns.set(effect.playerId, Date.now() + (effect.durationMs || 500));
+            }
             break;
         }
       });
@@ -339,6 +429,7 @@ export class NetworkedGame {
       baseHostHp: this.physics!.getBaseHp('host'),
       baseClientHp: this.physics!.getBaseHp('client'),
       winner: this.gameEnded && this.winner ? this.winner : undefined,
+      resources: Object.fromEntries(this.playerResources),
     };
     
     // Clear effect events after sending
@@ -363,6 +454,18 @@ export class NetworkedGame {
     if (!this.isRunning) return;
 
     const now = Date.now();
+
+    // Update resources periodically (host only)
+    if (this.role === 'host' && now - this.lastResourceUpdate >= this.resourceUpdateInterval) {
+      const intervalSeconds = this.resourceUpdateInterval / 1000;
+      const increment = this.resourceGainPerSecond * intervalSeconds;
+      this.playerResources.forEach((resources, playerId) => {
+        resources.material = Math.min(10, resources.material + increment);
+        resources.energy = Math.min(10, resources.energy + increment);
+        this.playerResources.set(playerId, resources);
+      });
+      this.lastResourceUpdate = now;
+    }
 
     // Detect game over on host
     if (this.role === 'host' && this.physics && !this.gameEnded && this.physics.isGameOver()) {
@@ -538,5 +641,9 @@ export class NetworkedGame {
 
   setSelectedContraption(data: ContraptionSaveData | null): void {
     if (data) this.savedContraption = data;
+  }
+
+  getPlayerResources(playerId: string): { material: number; energy: number } | null {
+    return this.playerResources.get(playerId) || null;
   }
 }

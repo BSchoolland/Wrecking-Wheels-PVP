@@ -26,6 +26,8 @@ export interface BlockData {
   damage?: number;
   knockback?: number;
   fragile?: boolean;
+  materialCost?: number;
+  energyCost?: number;
 }
 
 export interface PhysicsSpawnResult {
@@ -45,6 +47,8 @@ export abstract class BaseBlock {
   damage: number; // damage dealt on contact
   knockback: number; // force magnitude applied on contact
   fragile: boolean;
+  materialCost: number;
+  energyCost: number;
   
   constructor(id: string, type: BlockType, gridX: number, gridY: number, maxHealth: number = 100) {
     this.id = id;
@@ -57,6 +61,8 @@ export abstract class BaseBlock {
     this.damage = 2;
     this.knockback = 0.01;
     this.fragile = false;
+    this.materialCost = 0;
+    this.energyCost = 0;
   }
   
   /**
@@ -293,6 +299,8 @@ export abstract class BaseBlock {
       damage: this.damage,
       knockback: this.knockback,
       fragile: this.fragile,
+      materialCost: this.materialCost,
+      energyCost: this.energyCost,
     };
   }
 }

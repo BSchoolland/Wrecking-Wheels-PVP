@@ -12,6 +12,7 @@ export class TNTBlock extends BaseBlock {
     this.damage = 0;
     this.knockback = 0;
     this.fragile = true;
+    this.energyCost = 3;
   }
 
   getAttachmentFaces(): AttachmentDirection[] {

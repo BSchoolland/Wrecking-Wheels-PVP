@@ -119,6 +119,39 @@ export class EffectManager {
   }
 
   /**
+   * Spawn building dust clouds (white and light brown)
+   */
+  spawnBuildingDust(x: number, y: number, durationMs: number, radius: number = 50): void {
+    const appearSeconds = durationMs / 1000;
+    const count = 12;
+    for (let i = 0; i < count; i++) {
+      const r = Math.sqrt(Math.random()) * radius;
+      const theta = Math.random() * Math.PI * 2;
+      const cx = x + Math.cos(theta) * r;
+      const cy = y + Math.sin(theta) * r;
+      const size = Math.max(20, (1 - r / radius) * 35 + 15 + Math.random() * 15);
+      const fadeSeconds = 0.3 + Math.random() * 0.2;
+      const delay = Math.random() * appearSeconds * 0.5; // stagger during first half
+      // Mix white and light brown
+      const t = Math.random();
+      const rCol = Math.round(255 * (1 - t) + 194 * t);
+      const gCol = Math.round(255 * (1 - t) + 178 * t);
+      const bCol = Math.round(255 * (1 - t) + 128 * t);
+      const color = `rgb(${rCol},${gCol},${bCol})`;
+      this.explosions.push({
+        x: cx,
+        y: cy,
+        radius: size,
+        color,
+        elapsed: 0,
+        delay,
+        appearDuration: appearSeconds,
+        fadeDuration: fadeSeconds,
+      });
+    }
+  }
+
+  /**
    * Spawn impact particles at collision point
    */
   spawnImpactParticles(x: number, y: number, damage: number, vx: number, vy: number): void {
