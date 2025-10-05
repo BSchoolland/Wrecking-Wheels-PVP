@@ -180,7 +180,7 @@ export class NetworkedGame {
       const command: SpawnBoxCommand = {
         type: 'spawn-box',
         playerId: this.playerId,
-        position: worldPos,
+        position: { x: worldPos.x, y: 450 },
         contraption: this.savedContraption!,
       };
 

@@ -254,6 +254,20 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     setShowLoadModal(false);
   };
 
+  const exportContraption = () => {
+    const data = contraption.save();
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${contraption.name || 'contraption'}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   useEffect(() => {
     if (builderCanvasRef.current) {
       renderBuilder();
@@ -426,6 +440,7 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
             <button onClick={testContraption}>Test Contraption</button>
             <button onClick={saveContraption}>Save</button>
             <button onClick={() => setShowLoadModal(true)}>Load</button>
+            <button onClick={exportContraption}>Export JSON</button>
           </div>
         </>
       ) : (

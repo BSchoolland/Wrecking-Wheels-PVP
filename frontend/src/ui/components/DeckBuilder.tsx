@@ -15,7 +15,9 @@ function readAllSavedContraptions(): ContraptionSaveData[] {
       try {
         const data = JSON.parse(localStorage.getItem(key) || 'null');
         if (data && data.id && data.name) saved.push(data);
-      } catch {}
+      } catch {
+        console.error(`Error parsing saved contraption: ${key}`);
+      }
     }
   }
   // Stable order by name then id
@@ -79,6 +81,24 @@ export function DeckBuilder({ onBack }: DeckBuilderProps) {
     alert(`Saved Deck ${slot} (${ids.length}/6 cards).`);
   };
 
+  const exportDeck = () => {
+    const deckData = {
+      deckSlot: slot,
+      name: `Deck ${slot}`,
+      contraptions: deckContraptions
+    };
+    const json = JSON.stringify(deckData, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `deck-${slot}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div className="deck-builder" style={{ padding: 16 }}>
       <h2>Deck Builder</h2>
@@ -121,6 +141,7 @@ export function DeckBuilder({ onBack }: DeckBuilderProps) {
 
       <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
         <button onClick={save}>Save Deck</button>
+        <button onClick={exportDeck}>Export Deck JSON</button>
         <button onClick={onBack}>Back</button>
       </div>
     </div>

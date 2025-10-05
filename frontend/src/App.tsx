@@ -9,6 +9,35 @@ import { DeckBuilder } from '@/ui/components/DeckBuilder';
 import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
 import './App.css';
 
+const initializeDefaults = async () => {
+  // Check if any contraptions are saved
+  let hasContraptions = false;
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key?.startsWith('contraption-')) {
+      hasContraptions = true;
+      break;
+    }
+  }
+  if (hasContraptions) return;
+
+  try {
+    const defaultDeckModule = await import('./assets/default-deck.json', { assert: { type: 'json' } });
+    const defaultData = defaultDeckModule.default as { contraptions: ContraptionSaveData[] };
+
+    // Save each contraption
+    defaultData.contraptions.forEach((c: ContraptionSaveData) => {
+      localStorage.setItem(`contraption-${c.id}`, JSON.stringify(c));
+    });
+
+    // Save deck-1 with the ids (up to 6)
+    const ids = defaultData.contraptions.slice(0, 6).map((c: ContraptionSaveData) => c.id);
+    localStorage.setItem('deck-1', JSON.stringify(ids));
+  } catch (error) {
+    console.error('Failed to load default deck:', error);
+  }
+};
+
 type View = 'menu' | 'lobby' | 'game' | 'builder' | 'deck';
 type Role = 'host' | 'client';
 
@@ -91,6 +120,10 @@ function App() {
     setView('menu');
     setLobbyId('');
   };
+
+  useEffect(() => {
+    initializeDefaults();
+  }, []);
 
   useEffect(() => {
     selectedRef.current = selectedContraption;

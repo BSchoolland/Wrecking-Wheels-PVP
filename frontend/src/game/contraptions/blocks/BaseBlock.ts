@@ -92,6 +92,12 @@ export abstract class BaseBlock {
       myBody.velocity.x - otherBody.velocity.x,
       myBody.velocity.y - otherBody.velocity.y
     );
+
+    const isBase = otherBody.label && otherBody.label.includes('base');
+    const isTerrain = otherBody.label && (otherBody.label === 'ground' || otherBody.label.includes('wall'));
+    if (isBase || (isTerrain && !this.fragile)) {
+      return; // No knockback for bases or non-fragile blocks hitting terrain
+    }
     
     if (this.fragile) {
       const isTerrain = otherBody.label && (otherBody.label === 'ground' || otherBody.label.includes('wall'));
@@ -111,6 +117,8 @@ export abstract class BaseBlock {
         }
       }
     }
+
+
     
     // Only damage if from different contraption AND different team (no friendly fire)
     if (!this.fragile && targetBlock && myContraptionId !== targetContraptionId && myTeam !== targetTeam) {
@@ -141,10 +149,7 @@ export abstract class BaseBlock {
       }
     }
 
-    const isTerrain = otherBody.label && (otherBody.label === 'ground' || otherBody.label.includes('wall'));
-    if (isTerrain && !this.fragile) {
-      return; // No knockback for non-fragile blocks hitting terrain
-    }
+    
 
     // Compute normalized separation vector from myBody to otherBody
     const dx = otherBody.position.x - myBody.position.x;

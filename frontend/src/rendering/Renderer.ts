@@ -156,7 +156,7 @@ export class Renderer {
       this.ctx.save();
 
       // Early exit for destroyed bases
-      const renderOpts = body.render as any;
+      const renderOpts = body.render as Matter.IBodyRenderOptions & { healthPercent?: number };
       const hp = renderOpts?.healthPercent;
       if (body.label?.includes('base-') && hp !== undefined && hp <= 0) {
         this.ctx.restore();
@@ -223,7 +223,7 @@ export class Renderer {
 
       // Render damage cracks (host or client): compute healthPercent from available source
       const block = (body as unknown as { block?: BaseBlock }).block;
-      let crackHp: number | undefined = block
+      const crackHp: number | undefined = block
         ? Math.max(0, Math.min(1, block.health / block.maxHealth))
         : renderOpts?.healthPercent;
       this.effects.renderDamageCracksByPercent(this.ctx, body, crackHp);
