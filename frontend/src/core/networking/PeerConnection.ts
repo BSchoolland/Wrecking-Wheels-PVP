@@ -4,7 +4,7 @@
  */
 
 import type { GameState } from '@shared/types/GameState';
-import type { GameCommand, NetworkMessage } from '@shared/types/Commands';
+import type { GameCommand, NetworkMessage, UIState, GameEvent } from '@shared/types/Commands';
 
 export type ConnectionRole = 'host' | 'client';
 
@@ -18,7 +18,8 @@ export interface PeerConnectionConfig {
 export class PeerConnection {
   private role: ConnectionRole;
   private connection: RTCPeerConnection | null = null;
-  private dataChannel: RTCDataChannel | null = null;
+  private dataChannel: RTCDataChannel | null = null; // Physics channel (unreliable)
+  private reliableChannel: RTCDataChannel | null = null; // UI/Events channel (reliable)
   private onMessage: (message: NetworkMessage) => void;
   private onConnect: () => void;
   private onDisconnect: () => void;
@@ -66,21 +67,25 @@ export class PeerConnection {
       const state = this.connection?.connectionState;
       if (import.meta.env.DEV) console.log('Connection state:', state);
       
-      if (state === 'connected') {
-        this.onConnect();
-      } else if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+      if (state === 'disconnected' || state === 'failed' || state === 'closed') {
         this.onDisconnect();
       }
     };
 
-    // Host creates data channel
+    // Host creates data channels
     if (this.role === 'host') {
       this.createDataChannel();
+      this.createReliableChannel();
     } else {
-      // Client waits for data channel from host
+      // Client waits for data channels from host
       this.connection.ondatachannel = (event) => {
-        this.dataChannel = event.channel;
-        this.setupDataChannelHandlers();
+        if (event.channel.label === 'game-state') {
+          this.dataChannel = event.channel;
+          this.setupDataChannelHandlers();
+        } else if (event.channel.label === 'reliable') {
+          this.reliableChannel = event.channel;
+          this.setupReliableChannelHandlers();
+        }
       };
     }
   }
@@ -96,18 +101,51 @@ export class PeerConnection {
     this.setupDataChannelHandlers();
   }
 
+  private createReliableChannel(): void {
+    if (!this.connection) return;
+
+    this.reliableChannel = this.connection.createDataChannel('reliable', {
+      ordered: true, // Ordered delivery
+      // maxRetransmits not specified = reliable delivery
+    });
+
+    this.setupReliableChannelHandlers();
+  }
+
   private setupDataChannelHandlers(): void {
     if (!this.dataChannel) return;
 
     this.dataChannel.onopen = () => {
-      if (import.meta.env.DEV) console.log('Data channel opened');
+      if (import.meta.env.DEV) console.log('Physics data channel opened');
     };
 
     this.dataChannel.onclose = () => {
-      if (import.meta.env.DEV) console.log('Data channel closed');
+      if (import.meta.env.DEV) console.log('Physics data channel closed');
     };
 
     this.dataChannel.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data) as NetworkMessage;
+        this.onMessage(message);
+      } catch (error) {
+        console.error('Failed to parse message:', error);
+      }
+    };
+  }
+
+  private setupReliableChannelHandlers(): void {
+    if (!this.reliableChannel) return;
+
+    this.reliableChannel.onopen = () => {
+      if (import.meta.env.DEV) console.log('Reliable data channel opened');
+      this.onConnect();
+    };
+
+    this.reliableChannel.onclose = () => {
+      if (import.meta.env.DEV) console.log('Reliable data channel closed');
+    };
+
+    this.reliableChannel.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data) as NetworkMessage;
         this.onMessage(message);
@@ -137,7 +175,11 @@ export class PeerConnection {
    * Send command (client -> host or host -> host for local commands)
    */
   sendCommand(command: GameCommand): void {
-    this.send({
+    if (!this.reliableChannel || this.reliableChannel.readyState !== 'open') {
+      console.warn('Reliable channel not ready for command');
+      return;
+    }
+    this.sendReliable({
       type: 'command',
       payload: command,
       sequence: this.messageSequence++,
@@ -145,11 +187,43 @@ export class PeerConnection {
   }
 
   /**
-   * Send any message
+   * Send UI update (host -> client) - via reliable channel
+   */
+  sendUIUpdate(uiState: UIState): void {
+    if (this.role !== 'host') {
+      console.warn('Only host can send UI updates');
+      return;
+    }
+
+    this.sendReliable({
+      type: 'ui-update',
+      payload: uiState,
+      sequence: this.messageSequence++,
+    });
+  }
+
+  /**
+   * Send game event (host -> client) - via reliable channel
+   */
+  sendEvent(event: GameEvent): void {
+    if (this.role !== 'host') {
+      console.warn('Only host can send events');
+      return;
+    }
+
+    this.sendReliable({
+      type: 'event',
+      payload: event,
+      sequence: this.messageSequence++,
+    });
+  }
+
+  /**
+   * Send message via unreliable physics channel
    */
   private send(message: NetworkMessage): void {
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-      console.warn('Data channel not ready');
+      console.warn('Physics data channel not ready');
       return;
     }
 
@@ -157,6 +231,22 @@ export class PeerConnection {
       this.dataChannel.send(JSON.stringify(message));
     } catch (error) {
       console.error('Failed to send message:', error);
+    }
+  }
+
+  /**
+   * Send message via reliable channel
+   */
+  private sendReliable(message: NetworkMessage): void {
+    if (!this.reliableChannel || this.reliableChannel.readyState !== 'open') {
+      console.warn('Reliable data channel not ready');
+      return;
+    }
+
+    try {
+      this.reliableChannel.send(JSON.stringify(message));
+    } catch (error) {
+      console.error('Failed to send reliable message:', error);
     }
   }
 
@@ -203,8 +293,10 @@ export class PeerConnection {
    */
   close(): void {
     this.dataChannel?.close();
+    this.reliableChannel?.close();
     this.connection?.close();
     this.dataChannel = null;
+    this.reliableChannel = null;
     this.connection = null;
   }
 }

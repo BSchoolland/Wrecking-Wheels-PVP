@@ -55,13 +55,11 @@ export class Contraption {
     return this.getAllBlocks().find(b => b.type === 'core');
   }
   
-  getCost(): { material: number; energy: number } {
+  getCost(): { energy: number } {
     const blocks = this.getAllBlocks();
-    const totalMaterial = blocks.reduce((sum, b) => sum + b.materialCost, 0);
     const totalEnergy = blocks.reduce((sum, b) => sum + b.energyCost, 0);
     return {
-      material: Math.ceil(totalMaterial),
-      energy: Math.ceil(totalEnergy),
+      energy: Math.ceil(Number(totalEnergy.toFixed(2))),
     };
   }
   

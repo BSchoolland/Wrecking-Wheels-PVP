@@ -9,7 +9,7 @@ import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 export class SimpleBlock extends BaseBlock {
   constructor(id: string, gridX: number, gridY: number) {
     super(id, 'simple', gridX, gridY, 100);
-    this.materialCost = 0.1;
+    this.energyCost = 0.2;
   }
   
   getAttachmentFaces(): AttachmentDirection[] {

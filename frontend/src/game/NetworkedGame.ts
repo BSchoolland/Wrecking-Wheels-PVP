@@ -5,7 +5,7 @@
 import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
 import { Renderer } from '@/rendering/Renderer';
 import { NetworkManager, NetworkRole } from '@/core/networking/NetworkManager';
-import type { SpawnBoxCommand, GameCommand, ContraptionData } from '@shared/types/Commands';
+import type { SpawnBoxCommand, GameCommand, ContraptionData, UIState, GameEvent } from '@shared/types/Commands';
 import type { GameState } from '@shared/types/GameState';
 import type * as Matter from 'matter-js';
 import { Contraption, blockFromData } from '@/game/contraptions';
@@ -52,8 +52,6 @@ interface NetworkSnapshot {
   _receivedAt?: number;
   baseHostHp?: number;
   baseClientHp?: number;
-  winner?: 'host' | 'client';
-  resources?: { [playerId: string]: { material: number; energy: number } };
 }
 
 interface NetworkedGameConfig {
@@ -83,7 +81,9 @@ export class NetworkedGame {
   // Track bodies for state sync
   private bodies: Map<string, ExtendedBody> = new Map();
   private lastSyncTime = 0;
-  private syncInterval = 50; // Send state updates every 50ms (20 times per second)
+  private syncInterval = 50; // Send physics updates every 50ms (20 times per second)
+  private lastUISyncTime = 0;
+  private uiSyncInterval = 100; // Send UI updates every 100ms (10 times per second)
   
   // Effect events to sync (host only)
   private effectEvents: EffectEvent[] = [];
@@ -94,18 +94,24 @@ export class NetworkedGame {
 
   private latestSnapshot: NetworkSnapshot | null = null;
   private gameEnded = false;
-  private winner: 'host' | 'client' | null = null;
   private onGameOver?: (winner: 'host' | 'client') => void;
 
   // Cooldowns per player
   private buildCooldowns: Map<string, number> = new Map();
 
   // Resources per player
-  private playerResources: Map<string, { material: number; energy: number }> = new Map();
+  private playerResources: Map<string, { energy: number }> = new Map();
   private lastResourceUpdate = 0;
   // Change the resource update interval and amount
   private resourceUpdateInterval = 200; // 0.2 seconds
-  private resourceGainPerSecond = 0.4; // units per second for both material and energy
+  private resourceGainPerSecond = 1; // units per second for energy
+  private readonly maxEnergy = 20;
+  
+  // Track when both players are connected
+  private bothPlayersConnected = false;
+  
+  private _myResourcesCache: { energy: number } | null = null;
+  public energy: number = 0;
 
   constructor(config: NetworkedGameConfig) {
     this.canvas = config.canvas;
@@ -116,8 +122,10 @@ export class NetworkedGame {
     this.onGameOver = config.onGameOver;
     
     // Initialize resources for this player
-    this.playerResources.set(this.playerId, { material: 0.0, energy: 0.0 });
+    this.playerResources.set(this.playerId, { energy: 0.0 });
     this.lastResourceUpdate = Date.now();
+    this._myResourcesCache = { energy: 0.0 };
+    this.energy = 0;
     
     // Initialize renderer
     this.renderer = new Renderer(this.canvas);
@@ -136,15 +144,29 @@ export class NetworkedGame {
     }
     
     // Initialize networking
-    const signalingUrl = import.meta.env.VITE_SIGNALING_URL || 'ws://localhost:3001';
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const signalingUrl = import.meta.env.VITE_SIGNALING_URL || `${protocol}//${window.location.hostname}:3001`;
     this.network = new NetworkManager({
       role: this.role,
       lobbyId: config.lobbyId,
       signalingServerUrl: signalingUrl,
       onStateUpdate: (state) => this.handleStateUpdate(state),
       onCommand: (command) => this.handleCommand(command),
-      onConnected: () => { if (import.meta.env.DEV) console.log('Peer connected!'); },
-      onDisconnected: () => { if (import.meta.env.DEV) console.log('Peer disconnected!'); },
+      onUIUpdate: (uiState) => this.handleUIUpdate(uiState),
+      onEvent: (event) => this.handleEvent(event),
+      onConnected: () => { 
+        if (import.meta.env.DEV) console.log('Peer connected!');
+        this.bothPlayersConnected = true;
+        if (import.meta.env.DEV) console.log('Both players connected - energy generation started');
+        // Client sends their playerId to host so host can initialize their resources
+        if (this.role === 'client') {
+          this.network.sendCommand({ type: 'player-init', playerId: this.playerId });
+        }
+      },
+      onDisconnected: () => { 
+        if (import.meta.env.DEV) console.log('Peer disconnected!');
+        this.bothPlayersConnected = false;
+      },
     });
 
     // Set up click handler
@@ -205,7 +227,7 @@ export class NetworkedGame {
       const cost = contraption.getCost();
       
       const currentResources = this.playerResources.get(this.playerId);
-      if (!currentResources || currentResources.material < cost.material || currentResources.energy < cost.energy) {
+      if (!currentResources || currentResources.energy < cost.energy) {
         return;
       }
 
@@ -239,6 +261,14 @@ export class NetworkedGame {
     if (this.physics.isGameOver()) return;
 
     switch (command.type) {
+      case 'player-init':
+        // Initialize resources for the connecting player
+        if (!this.playerResources.has(command.playerId)) {
+          console.log('Initialized resources for player:', command.playerId);
+          this.playerResources.set(command.playerId, { energy: 0.0 });
+          if (import.meta.env.DEV) console.log('Initialized resources for player:', command.playerId);
+        }
+        break;
       case 'spawn-box':
         if (command.playerId !== this.playerId) {
           this.physics.setBaseOwner('client', command.playerId);
@@ -256,7 +286,8 @@ export class NetworkedGame {
 
     // Initialize resources for other player if not yet initialized
     if (!this.playerResources.has(playerId)) {
-      this.playerResources.set(playerId, { material: 0.0, energy: 0.0 });
+      console.log('Reset player resources for:', playerId);
+      this.playerResources.set(playerId, { energy: 0.0 });
     }
 
     // Determine direction: host faces right (1), client faces left (-1)
@@ -288,7 +319,6 @@ export class NetworkedGame {
     
     const currentResources = this.playerResources.get(playerId);
     if (currentResources) {
-      currentResources.material -= cost.material;
       currentResources.energy -= cost.energy;
       this.playerResources.set(playerId, currentResources);
     }
@@ -340,7 +370,7 @@ export class NetworkedGame {
   }
 
   /**
-   * Handle state update from host (client only)
+   * Handle state update from host (client only) - Physics Channel
    */
   private handleStateUpdate(state: GameState): void {
     if (this.role === 'host') return;
@@ -348,13 +378,6 @@ export class NetworkedGame {
     const snapshot = { ...(state as unknown as NetworkSnapshot), _receivedAt: Date.now() } as NetworkSnapshot;
     this.snapshotBuffer.push(snapshot);
     this.latestSnapshot = snapshot;
-
-    // Update resources from snapshot
-    if (snapshot.resources) {
-      Object.entries(snapshot.resources).forEach(([playerId, resources]) => {
-        this.playerResources.set(playerId, resources);
-      });
-    }
 
     // Process effect events
     if (snapshot.effects) {
@@ -388,6 +411,49 @@ export class NetworkedGame {
     const cutoff = Date.now() - 1000;
     while (this.snapshotBuffer.length && ((this.snapshotBuffer[0].timestamp ?? this.snapshotBuffer[0]._receivedAt) as number) < cutoff) {
       this.snapshotBuffer.shift();
+    }
+  }
+
+  /**
+   * Handle UI update from host (client only) - UI Channel
+   */
+  private handleUIUpdate(uiState: UIState): void {
+    if (this.role === 'host') return;
+    
+    
+    // Update resources
+    Object.entries(uiState.resources).forEach(([playerId, resources]) => {
+      this.playerResources.set(playerId, resources);
+      if (playerId === this.playerId) {
+        this._myResourcesCache = resources;
+        this.energy = resources.energy;
+      } 
+    });
+
+    // Update cooldowns
+    Object.entries(uiState.cooldowns).forEach(([playerId, cooldownEnd]) => {
+      this.buildCooldowns.set(playerId, cooldownEnd);
+    });
+  }
+
+  /**
+   * Handle game event from host (client only) - Events Channel
+   */
+  private handleEvent(event: GameEvent): void {
+    if (this.role === 'host') return;
+
+    switch (event.type) {
+      case 'game-over':
+        if (!this.gameEnded) {
+          this.gameEnded = true;
+          if (this.onGameOver) {
+            this.onGameOver(event.winner);
+          }
+        }
+        break;
+      case 'player-joined':
+        if (import.meta.env.DEV) console.log('Player joined:', event.playerId);
+        break;
     }
   }
 
@@ -428,14 +494,22 @@ export class NetworkedGame {
       effects: this.effectEvents.length > 0 ? [...this.effectEvents] : undefined,
       baseHostHp: this.physics!.getBaseHp('host'),
       baseClientHp: this.physics!.getBaseHp('client'),
-      winner: this.gameEnded && this.winner ? this.winner : undefined,
-      resources: Object.fromEntries(this.playerResources),
     };
     
     // Clear effect events after sending
     this.effectEvents = [];
     
     return snapshot;
+  }
+
+  /**
+   * Serialize UI state for network transmission (host only)
+   */
+  private serializeUIState(): UIState {
+    return {
+      resources: Object.fromEntries(this.playerResources),
+      cooldowns: Object.fromEntries(this.buildCooldowns),
+    };
   }
 
   /**
@@ -455,14 +529,17 @@ export class NetworkedGame {
 
     const now = Date.now();
 
-    // Update resources periodically (host only)
-    if (this.role === 'host' && now - this.lastResourceUpdate >= this.resourceUpdateInterval) {
+    // Update resources periodically (host only, and only when both players are connected)
+    if (this.role === 'host' && this.bothPlayersConnected && now - this.lastResourceUpdate >= this.resourceUpdateInterval) {
       const intervalSeconds = this.resourceUpdateInterval / 1000;
       const increment = this.resourceGainPerSecond * intervalSeconds;
       this.playerResources.forEach((resources, playerId) => {
-        resources.material = Math.min(10, resources.material + increment);
-        resources.energy = Math.min(10, resources.energy + increment);
+        resources.energy = Math.min(this.maxEnergy, resources.energy + increment);
         this.playerResources.set(playerId, resources);
+        if (playerId === this.playerId) {
+          this._myResourcesCache = resources;
+          this.energy = resources.energy;
+        }
       });
       this.lastResourceUpdate = now;
     }
@@ -478,13 +555,17 @@ export class NetworkedGame {
       } else if (hostHp <= 0) {
         winner = 'client';
       }
-      this.winner = winner;
-      if (this.onGameOver && winner) {
-        this.onGameOver(winner);
+      
+      // Send game-over event via events channel
+      if (winner) {
+        this.network.sendEvent({ type: 'game-over', winner });
+        if (this.onGameOver) {
+          this.onGameOver(winner);
+        }
       }
     }
 
-    // Host: sync state to client periodically
+    // Host: sync physics state to client periodically (20Hz)
     if (this.role === 'host' && this.network.isConnected()) {
       if (now - this.lastSyncTime >= this.syncInterval) {
         const state = this.serializeState();
@@ -492,6 +573,16 @@ export class NetworkedGame {
           this.network.sendState(state as unknown);
           this.lastSyncTime = now;
         }
+      }
+    }
+
+    // Host: sync UI state to client periodically (10Hz)
+    if (this.role === 'host' && this.network.isConnected()) {
+      if (now - this.lastUISyncTime >= this.uiSyncInterval) {
+        const uiState = this.serializeUIState();
+        if (import.meta.env.DEV) console.log('Host sending UI update:', uiState);
+        this.network.sendUIUpdate(uiState);
+        this.lastUISyncTime = now;
       }
     }
 
@@ -503,14 +594,6 @@ export class NetworkedGame {
       // Client: render interpolated snapshot
       const renderTime = now - this.interpolationDelay;
       const bodies = this.getInterpolatedBodies(renderTime);
-      
-      // Detect game over on client
-      if (this.latestSnapshot?.winner && !this.gameEnded) {
-        this.gameEnded = true;
-        if (this.onGameOver) {
-          this.onGameOver(this.latestSnapshot.winner);
-        }
-      }
       
       this.renderer.renderPhysics(bodies as Matter.Body[]);
     }
@@ -643,7 +726,12 @@ export class NetworkedGame {
     if (data) this.savedContraption = data;
   }
 
-  getPlayerResources(playerId: string): { material: number; energy: number } | null {
-    return this.playerResources.get(playerId) || null;
+  getPlayerResources(_playerId: string): { energy: number } | null {
+    return this._myResourcesCache || this.playerResources.get(this.playerId) || null;
+  }
+
+  getMyEnergy(): number {
+    return this._myResourcesCache?.energy ?? 0;
   }
 }
+

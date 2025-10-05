@@ -14,7 +14,6 @@ export class SpikeBlock extends BaseBlock {
     // Spikes hit harder and knock back more by default
     this.damage = 25;
     this.knockback = 0.02;
-    this.materialCost = 0.1;
     this.energyCost = 0.5;
   }
 

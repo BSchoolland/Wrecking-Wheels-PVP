@@ -5,7 +5,7 @@
 
 import { PeerConnection } from './PeerConnection';
 import type { GameState } from '@shared/types/GameState';
-import type { GameCommand } from '@shared/types/Commands';
+import type { GameCommand, UIState, GameEvent } from '@shared/types/Commands';
 
 export type NetworkRole = 'host' | 'client';
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'failed';
@@ -59,6 +59,8 @@ interface NetworkManagerConfig {
   signalingServerUrl: string;
   onStateUpdate?: (state: GameState) => void;
   onCommand?: (command: GameCommand) => void;
+  onUIUpdate?: (uiState: UIState) => void;
+  onEvent?: (event: GameEvent) => void;
   onConnected?: () => void;
   onDisconnected?: () => void;
 }
@@ -74,6 +76,8 @@ export class NetworkManager {
   
   private onStateUpdate: (state: GameState) => void;
   private onCommand: (command: GameCommand) => void;
+  private onUIUpdate: (uiState: UIState) => void;
+  private onEvent: (event: GameEvent) => void;
   private onConnected: () => void;
   private onDisconnected: () => void;
 
@@ -82,6 +86,8 @@ export class NetworkManager {
     this.lobbyId = config.lobbyId;
     this.onStateUpdate = config.onStateUpdate || (() => {});
     this.onCommand = config.onCommand || (() => {});
+    this.onUIUpdate = config.onUIUpdate || (() => {});
+    this.onEvent = config.onEvent || (() => {});
     this.onConnected = config.onConnected || (() => {});
     this.onDisconnected = config.onDisconnected || (() => {});
 
@@ -96,7 +102,6 @@ export class NetworkManager {
     this.signalingWs = new WebSocket(url);
 
     this.signalingWs.onopen = () => {
-      if (import.meta.env.DEV) console.log('Connected to signaling server');
     };
 
     this.signalingWs.onmessage = (event) => {
@@ -110,7 +115,6 @@ export class NetworkManager {
     };
 
     this.signalingWs.onclose = () => {
-      if (import.meta.env.DEV) console.log('Disconnected from signaling server');
       this.connectionState = 'disconnected';
     };
   }
@@ -119,13 +123,11 @@ export class NetworkManager {
    * Handle messages from signaling server
    */
   private async handleSignalingMessage(message: SignalingMessage): Promise<void> {
-    if (import.meta.env.DEV) console.log('Signaling message:', message.type);
 
     switch (message.type) {
       case 'connected':
         // Server assigned us an ID
         this.myClientId = message.clientId;
-        if (import.meta.env.DEV) console.log('My client ID:', this.myClientId);
         
         // Join the lobby
         this.joinLobby();
@@ -133,7 +135,6 @@ export class NetworkManager {
 
       case 'peer-joined':
         // Another peer joined the lobby
-        if (import.meta.env.DEV) console.log('Peer joined:', message.peerId, 'as', message.peerRole);
         this.peerId = message.peerId;
         
         // If we're the host, initiate WebRTC connection
@@ -148,7 +149,6 @@ export class NetworkManager {
         break;
 
       case 'peer-left':
-        if (import.meta.env.DEV) console.log('Peer left:', message.peerId);
         this.peerId = null;
         this.peerConnection?.close();
         this.peerConnection = null;
@@ -174,7 +174,6 @@ export class NetworkManager {
    * Initiate WebRTC connection (called by host)
    */
   private async initiateWebRTC(): Promise<void> {
-    if (import.meta.env.DEV) console.log('Initiating WebRTC connection...');
 
     // Create peer connection
     this.peerConnection = new PeerConnection({
@@ -184,15 +183,17 @@ export class NetworkManager {
           this.onStateUpdate(message.payload as unknown as GameState);
         } else if (message.type === 'command') {
           this.onCommand(message.payload as unknown as GameCommand);
+        } else if (message.type === 'ui-update') {
+          this.onUIUpdate(message.payload as unknown as UIState);
+        } else if (message.type === 'event') {
+          this.onEvent(message.payload as unknown as GameEvent);
         }
       },
       onConnect: () => {
-        if (import.meta.env.DEV) console.log('WebRTC connected!');
         this.connectionState = 'connected';
         this.onConnected();
       },
       onDisconnect: () => {
-        if (import.meta.env.DEV) console.log('WebRTC disconnected');
         this.connectionState = 'disconnected';
         this.onDisconnected();
       },
@@ -214,7 +215,6 @@ export class NetworkManager {
    * Handle WebRTC signaling from peer
    */
   private async handleWebRTCSignal(_fromId: string, signal: WebRTCSignal): Promise<void> {
-    if (import.meta.env.DEV) console.log('Received WebRTC signal:', signal.type);
 
     // Create peer connection if we don't have one (client receiving offer)
     if (!this.peerConnection) {
@@ -225,15 +225,17 @@ export class NetworkManager {
             this.onStateUpdate(message.payload as unknown as GameState);
           } else if (message.type === 'command') {
             this.onCommand(message.payload as unknown as GameCommand);
+          } else if (message.type === 'ui-update') {
+            this.onUIUpdate(message.payload as unknown as UIState);
+          } else if (message.type === 'event') {
+            this.onEvent(message.payload as unknown as GameEvent);
           }
         },
         onConnect: () => {
-          if (import.meta.env.DEV) console.log('WebRTC connected!');
           this.connectionState = 'connected';
           this.onConnected();
         },
         onDisconnect: () => {
-          if (import.meta.env.DEV) console.log('WebRTC disconnected');
           this.connectionState = 'disconnected';
           this.onDisconnected();
         },
@@ -293,6 +295,28 @@ export class NetworkManager {
   }
 
   /**
+   * Send UI update (host only)
+   */
+  sendUIUpdate(uiState: UIState): void {
+    if (this.role !== 'host') {
+      console.warn('Only host can send UI updates');
+      return;
+    }
+    this.peerConnection?.sendUIUpdate(uiState);
+  }
+
+  /**
+   * Send game event (host only)
+   */
+  sendEvent(event: GameEvent): void {
+    if (this.role !== 'host') {
+      console.warn('Only host can send events');
+      return;
+    }
+    this.peerConnection?.sendEvent(event);
+  }
+
+  /**
    * Get current connection state
    */
   getState(): ConnectionState {
@@ -315,12 +339,12 @@ export class NetworkManager {
         if (this.signalingWs.readyState === WebSocket.OPEN) {
           this.signalingWs.send(JSON.stringify({ type: 'leave-lobby' }));
         }
-      } catch {}
-      try { this.signalingWs.close(); } catch {}
+      } catch (e) { /* noop */ }
+      try { this.signalingWs.close(); } catch (e) { /* noop */ }
       this.signalingWs = null;
     }
 
-    try { this.peerConnection?.close(); } catch {}
+    try { this.peerConnection?.close(); } catch (e) { /* noop */ }
     this.peerConnection = null;
     this.connectionState = 'disconnected';
   }

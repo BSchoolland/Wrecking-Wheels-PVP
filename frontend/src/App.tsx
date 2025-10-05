@@ -53,7 +53,7 @@ function App() {
   const [deckQueue, setDeckQueue] = useState<ContraptionSaveData[]>([]); // remaining draw pile
   const [hand, setHand] = useState<ContraptionSaveData[]>([]);
   const [gameOver, setGameOver] = useState<string | null>(null);
-  const [resources, setResources] = useState({ material: 0, energy: 0 });
+  const [energy, setEnergy] = useState(0);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<NetworkedGame | null>(null);
@@ -86,21 +86,20 @@ function App() {
     }
   };
 
-  const calculateCost = (contraption: ContraptionSaveData): { material: number; energy: number } => {
-    const totalMaterial = contraption.blocks.reduce((sum, b) => {
-      if (b.materialCost !== undefined) return sum + b.materialCost;
-      const block = createBlock(b.type as BlockType, 0, 0);
-      return sum + block.materialCost;
-    }, 0);
+  const calculateCost = (contraption: ContraptionSaveData): { energy: number } => {
     const totalEnergy = contraption.blocks.reduce((sum, b) => {
       if (b.energyCost !== undefined) return sum + b.energyCost;
       const block = createBlock(b.type as BlockType, 0, 0);
       return sum + block.energyCost;
     }, 0);
     return {
-      material: Math.ceil(totalMaterial),
-      energy: Math.ceil(totalEnergy),
+      energy: Math.ceil(Number(totalEnergy.toFixed(2))),
     };
+  };
+
+  const calculatePlacementTime = (contraption: ContraptionSaveData): number => {
+    const blockCount = contraption.blocks.length;
+    return (500 + blockCount * 50) / 1000; // Convert to seconds
   };
 
   const renderContraptionPreview = (contraption: ContraptionSaveData): JSX.Element => {
@@ -191,8 +190,6 @@ function App() {
 
   useEffect(() => {
     if (view === 'game' && canvasRef.current && lobbyId && selectedContraption) {
-      let resourceInterval: number | null = null;
-      
       // Create networked game instance only once per game start
       if (!gameRef.current) {
         gameRef.current = new NetworkedGame({
@@ -240,18 +237,14 @@ function App() {
         gameRef.current.setSelectedContraption(selectedContraption);
       }
 
-      // Start resource polling while in game view
-      resourceInterval = setInterval(() => {
-        const res = gameRef.current?.getPlayerResources(playerId);
-        if (res) {
-          setResources(prev => (prev.material !== res.material || prev.energy !== res.energy)
-            ? { material: res.material, energy: res.energy }
-            : prev);
-        }
-      }, 50);
+      // Poll energy for UI display
+      const energyInterval = setInterval(() => {
+        const currentEnergy = gameRef.current?.getMyEnergy() ?? 0;
+        setEnergy(currentEnergy);
+      }, 100);
 
       return () => {
-        if (resourceInterval) clearInterval(resourceInterval);
+        clearInterval(energyInterval);
         if (view !== 'game' && gameRef.current) {
           gameRef.current.destroy();
           gameRef.current = null;
@@ -368,17 +361,17 @@ function App() {
               <span>Right/Middle Click + Drag: Pan camera</span>
               <span>Mouse Wheel: Zoom in/out</span>
             </div>
-            <div className="resources-display">
-              <span style={{ fontWeight: 'bold' }}>⚙️ Material: {resources.material.toFixed(1)}/10</span>
-              <span style={{ fontWeight: 'bold' }}>⚡ Energy: {resources.energy.toFixed(1)}/10</span>
+            <div className="energy-display">
+              <span style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>⚡ {energy.toFixed(1)}/20</span>
             </div>
           </div>
           <div className="contraption-cards-container">
             <div className="contraption-cards">
               {hand.map((c) => {
                 const cost = calculateCost(c);
+                const placementTime = calculatePlacementTime(c);
                 const isSelected = selectedContraption?.id === c.id;
-                const canAfford = resources.material >= cost.material && resources.energy >= cost.energy;
+                const canAfford = energy >= cost.energy;
                 
                 return (
                   <div 
@@ -394,11 +387,11 @@ function App() {
                       {renderContraptionPreview(c)}
                     </div>
                     <div className="card-costs">
-                      <span className={`cost-item ${resources.material < cost.material ? 'insufficient' : ''}`}>
-                        ⚙️ {cost.material}
-                      </span>
-                      <span className={`cost-item ${resources.energy < cost.energy ? 'insufficient' : ''}`}>
+                      <span className={`cost-item ${energy < cost.energy ? 'insufficient' : ''}`}>
                         ⚡ {cost.energy}
+                      </span>
+                      <span className="cost-item">
+                        ⏱️ {placementTime.toFixed(1)}s
                       </span>
                     </div>
                   </div>

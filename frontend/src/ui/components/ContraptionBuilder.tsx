@@ -376,12 +376,23 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     return contraption.getAllBlocks().filter(b => b.type === type).length;
   };
 
+  const getTotalEnergy = (): { raw: number; rounded: number } => {
+    const raw = contraption.getAllBlocks().reduce((sum, b) => sum + b.energyCost, 0);
+    return { raw, rounded: Math.ceil(raw) };
+  };
+
   return (
     <div className="contraption-builder">
       <div className="builder-header">
         <h2>Contraption Builder</h2>
         <button onClick={onBack}>Back to Menu</button>
       </div>
+      
+      {!isTesting && (
+        <div className="energy-display" style={{ textAlign: 'center', padding: '10px', fontSize: '18px', fontWeight: 'bold' }}>
+          Energy: {getTotalEnergy().raw.toFixed(2)} {'->'} {Math.ceil(Number(getTotalEnergy().raw.toFixed(2)))}
+        </div>
+      )}
       
       {!isTesting ? (
         <>

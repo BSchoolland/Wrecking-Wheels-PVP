@@ -22,7 +22,8 @@ export interface ContraptionData {
 export type GameCommand = 
   | DeployCommand
   | ReadyCommand
-  | SpawnBoxCommand;
+  | SpawnBoxCommand
+  | PlayerInitCommand;
 
 export interface DeployCommand {
   type: 'deploy';
@@ -44,11 +45,31 @@ export interface SpawnBoxCommand {
   contraption: ContraptionData;
 }
 
+export interface PlayerInitCommand {
+  type: 'player-init';
+  playerId: string;
+}
+
+/**
+ * UI State Update (host -> client, 5-10Hz, reliable)
+ */
+export interface UIState {
+  resources: { [playerId: string]: { energy: number } };
+  cooldowns: { [playerId: string]: number }; // timestamp when cooldown ends
+}
+
+/**
+ * Game Event (host -> client, one-off, reliable)
+ */
+export type GameEvent = 
+  | { type: 'game-over'; winner: 'host' | 'client' }
+  | { type: 'player-joined'; playerId: string };
+
 /**
  * Network message wrapper
  */
 export interface NetworkMessage<T = unknown> {
-  type: 'command' | 'state' | 'event';
+  type: 'command' | 'state' | 'ui-update' | 'event';
   payload: T;
   sequence?: number; // for message ordering
 }

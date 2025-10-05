@@ -13,8 +13,7 @@ export class WheelBlock extends BaseBlock {
   
   constructor(id: string, gridX: number, gridY: number) {
     super(id, 'wheel', gridX, gridY);
-    this.materialCost = 0.25;
-    this.energyCost = 0.25;
+    this.energyCost = 0.5;
   }
   
   getAttachmentFaces(): AttachmentDirection[] {
