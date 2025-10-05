@@ -55,6 +55,15 @@ export class Contraption {
     return this.getAllBlocks().find(b => b.type === 'core');
   }
   
+  removeBlockAt(gridX: number, gridY: number): void {
+    for (const [key, block] of this.blocks.entries()) {
+      if (block.gridX === gridX && block.gridY === gridY) {
+        this.blocks.delete(key);
+        return;
+      }
+    }
+  }
+  
   /**
    * Check connectivity using BFS pathfinding.
    * Blocks not connected to the core have their health set to 0.

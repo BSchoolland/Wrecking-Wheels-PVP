@@ -9,7 +9,8 @@ import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 export class GrayBlock extends BaseBlock {
   constructor(id: string, gridX: number, gridY: number) {
     super(id, 'gray', gridX, gridY);
-    this.health = 2000;
+    this.health = 100;
+    this.damage = 4;
   }
   
   getAttachmentFaces(): AttachmentDirection[] {
@@ -33,6 +34,15 @@ export class GrayBlock extends BaseBlock {
       constraints: [],
       primaryBody: body,
     };
+  }
+  applyResistance(amount: number, type: import('./BaseBlock').DamageType): number {
+    if (type === 'sharp') {
+      return amount * 0.05;
+    }
+    if (type === 'blunt') {
+      return amount * 0.1;
+    }
+    return amount;
   }
 }
 

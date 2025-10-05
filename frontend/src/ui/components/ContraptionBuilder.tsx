@@ -21,6 +21,8 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
   const [selectedBlock, setSelectedBlock] = useState<BlockType>('core');
   const [isTesting, setIsTesting] = useState(false);
   const [showLoadModal, setShowLoadModal] = useState(false);
+  const [isMouseDown, setIsMouseDown] = useState(false);
+  const [mouseButton, setMouseButton] = useState<'left' | 'right' | null>(null);
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const builderCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -28,38 +30,83 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
   const rendererRef = useRef<Renderer | null>(null);
   const animationFrameRef = useRef<number | null>(null);
 
-  // Handle grid click to place blocks
-  const handleGridClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  const hasCore = contraption.hasCore();
+  const isCoreDisabled = hasCore;  // Disable button if core already exists (can't place second)
+
+  // Handle grid interaction
+  const handleGridMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (isTesting) return;
     
     const canvas = builderCanvasRef.current;
     if (!canvas) return;
     
+    setIsMouseDown(true);
+    let buttonType: 'left' | 'right' | null = null;
+    if (e.button === 0) {
+      buttonType = 'left';
+      setMouseButton('left');
+    } else if (e.button === 2) {
+      buttonType = 'right';
+      setMouseButton('right');
+    }
+    
+    // Trigger immediate action
+    if (buttonType) {
+      handleGridAction(e, canvas, buttonType);
+    }
+  };
+
+  const handleGridMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (isTesting) return;
+    setIsMouseDown(false);
+    setMouseButton(null);
+  };
+
+  const handleGridMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (isTesting || !isMouseDown) return;
+    handleGridAction(e, builderCanvasRef.current!, mouseButton);
+  };
+
+  const handleGridAction = (e: React.MouseEvent<HTMLCanvasElement>, canvas: HTMLCanvasElement, button?: 'left' | 'right') => {
+    const usedButton = button ?? mouseButton;
+    if (!usedButton) return;
+    
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     
-    // Convert to grid coordinates (centered on canvas)
     const gridSize = BUILDER_CONSTANTS.GRID_SIZE;
     const offsetX = canvas.width / 2;
     const offsetY = canvas.height / 2;
+    const halfSize = gridSize / 2;
     
-    const gridX = Math.floor((x - offsetX) / gridSize + 0.5);
-    const gridY = Math.floor((y - offsetY) / gridSize + 0.5);
+    const gridX = Math.floor((x - offsetX + halfSize) / gridSize);
+    const gridY = Math.floor((y - offsetY + halfSize) / gridSize);
     
-    // Check if trying to place a core when one already exists
-    if (selectedBlock === 'core' && contraption.hasCore()) {
-      return;
-    }
-    
-    // Add block
-    const block = createBlock(selectedBlock, gridX, gridY);
-    if (contraption.addBlock(block)) {
-      // Create new contraption instance to trigger re-render
+    if (usedButton === 'left') {
+      // Place block
+      if (selectedBlock === 'core' && contraption.hasCore()) {
+        return;
+      }
+      const block = createBlock(selectedBlock, gridX, gridY);
+      if (contraption.addBlock(block)) {
+        const newContraption = new Contraption(contraption.id, contraption.name);
+        contraption.getAllBlocks().forEach(b => newContraption.addBlock(b));
+        setContraption(newContraption);
+      }
+    } else if (usedButton === 'right') {
+      // Delete block at position
+      contraption.removeBlockAt(gridX, gridY);
       const newContraption = new Contraption(contraption.id, contraption.name);
       contraption.getAllBlocks().forEach(b => newContraption.addBlock(b));
       setContraption(newContraption);
     }
+  };
+
+  const handleGridContextMenu = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    e.preventDefault();
+    if (isTesting) return;
+    // Right click handled in mouse down/up/move
   };
 
   // Render the builder grid and blocks
@@ -78,6 +125,7 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     const gridSize = BUILDER_CONSTANTS.GRID_SIZE;
     const offsetX = canvas.width / 2;
     const offsetY = canvas.height / 2;
+    const halfSize = gridSize / 2;
     
     // Draw grid
     ctx.strokeStyle = '#ddd';
@@ -86,14 +134,14 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     for (let i = -gridRange; i <= gridRange; i++) {
       // Vertical lines
       ctx.beginPath();
-      ctx.moveTo(offsetX + i * gridSize, 0);
-      ctx.lineTo(offsetX + i * gridSize, canvas.height);
+      ctx.moveTo(offsetX + i * gridSize - halfSize, 0);
+      ctx.lineTo(offsetX + i * gridSize - halfSize, canvas.height);
       ctx.stroke();
       
       // Horizontal lines
       ctx.beginPath();
-      ctx.moveTo(0, offsetY + i * gridSize);
-      ctx.lineTo(canvas.width, offsetY + i * gridSize);
+      ctx.moveTo(0, offsetY + i * gridSize - halfSize);
+      ctx.lineTo(canvas.width, offsetY + i * gridSize - halfSize);
       ctx.stroke();
     }
     
@@ -272,6 +320,46 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     };
   }, []);
 
+  useEffect(() => {
+    if (isTesting) return;
+    
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      
+      let newBlock: BlockType | null = null;
+      switch (e.key) {
+        case '1': newBlock = 'core'; break;
+        case '2': newBlock = 'simple'; break;
+        case '3': newBlock = 'wheel'; break;
+        case '4': newBlock = 'spike'; break;
+        case '5': newBlock = 'gray'; break;
+        case '6': newBlock = 'tnt'; break;
+      }
+      
+      if (newBlock) {
+        e.preventDefault();
+        setSelectedBlock(newBlock);
+        // If core selected but already has core, switch to simple
+        if (newBlock === 'core' && contraption.hasCore()) {
+          setSelectedBlock('simple');
+        }
+      }
+    };
+    
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isTesting, contraption]);  // Depend on contraption for hasCore check
+
+  useEffect(() => {
+    if (hasCore && selectedBlock === 'core') {
+      setSelectedBlock('simple');
+    }
+  }, [contraption, selectedBlock]);
+
+  const getBlockCount = (type: BlockType): number => {
+    return contraption.getAllBlocks().filter(b => b.type === type).length;
+  };
+
   return (
     <div className="contraption-builder">
       <div className="builder-header">
@@ -283,40 +371,41 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
         <>
           <div className="builder-palette">
             <button 
-              className={selectedBlock === 'core' ? 'active' : ''}
-              onClick={() => setSelectedBlock('core')}
+              className={`${selectedBlock === 'core' ? 'active' : ''} ${isCoreDisabled ? 'disabled' : ''}`}
+              onClick={() => !isCoreDisabled && setSelectedBlock('core')}
+              disabled={isCoreDisabled}
             >
-              Core
+              Core ({getBlockCount('core')})
             </button>
             <button 
               className={selectedBlock === 'simple' ? 'active' : ''}
               onClick={() => setSelectedBlock('simple')}
             >
-              Block
+              Simple ({getBlockCount('simple')})
             </button>
             <button 
               className={selectedBlock === 'wheel' ? 'active' : ''}
               onClick={() => setSelectedBlock('wheel')}
             >
-              Wheel
+              Wheel ({getBlockCount('wheel')})
             </button>
             <button 
               className={selectedBlock === 'spike' ? 'active' : ''}
               onClick={() => setSelectedBlock('spike')}
             >
-              Spike
+              Spike ({getBlockCount('spike')})
             </button>
             <button 
               className={selectedBlock === 'gray' ? 'active' : ''}
               onClick={() => setSelectedBlock('gray')}
             >
-              Gray
+              Gray ({getBlockCount('gray')})
             </button>
             <button 
               className={selectedBlock === 'tnt' ? 'active' : ''}
               onClick={() => setSelectedBlock('tnt')}
             >
-              TNT
+              TNT ({getBlockCount('tnt')})
             </button>
           </div>
           
@@ -324,7 +413,10 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
             ref={builderCanvasRef}
             width={800}
             height={600}
-            onClick={handleGridClick}
+            onMouseDown={handleGridMouseDown}
+            onMouseUp={handleGridMouseUp}
+            onMouseMove={handleGridMouseMove}
+            onContextMenu={handleGridContextMenu}
             className="builder-canvas"
           />
           

@@ -81,14 +81,22 @@ export abstract class BaseBlock {
     const myTeam = (myBody as unknown as { team?: string }).team;
     const targetTeam = (otherBody as unknown as { team?: string }).team;
     
+    const isFriendly = targetBlock && myContraptionId && targetContraptionId && myTeam && targetTeam && 
+      (myContraptionId === targetContraptionId || myTeam === targetTeam);
+    
+    if (isFriendly) {
+      return;
+    }
+    
     const relativeSpeed = Math.hypot(
       myBody.velocity.x - otherBody.velocity.x,
       myBody.velocity.y - otherBody.velocity.y
     );
     
     if (this.fragile) {
+      const isTerrain = otherBody.label && (otherBody.label === 'ground' || otherBody.label.includes('wall'));
       let damageAmount = relativeSpeed * 2;
-      if (otherBody.label && (otherBody.label === 'ground' || otherBody.label.includes('wall'))) {
+      if (isTerrain) {
         damageAmount += 1;
       }
       if (damageAmount > 0.5) {
@@ -133,6 +141,11 @@ export abstract class BaseBlock {
       }
     }
 
+    const isTerrain = otherBody.label && (otherBody.label === 'ground' || otherBody.label.includes('wall'));
+    if (isTerrain && !this.fragile) {
+      return; // No knockback for non-fragile blocks hitting terrain
+    }
+
     // Compute normalized separation vector from myBody to otherBody
     const dx = otherBody.position.x - myBody.position.x;
     const dy = otherBody.position.y - myBody.position.y;
@@ -162,7 +175,7 @@ export abstract class BaseBlock {
       console.log('Using queueForce for both bodies');
       myPhysics.queueForce(myBody, { x: -fx, y: -fy });
       otherPhysics.queueForce(otherBody, { x: fx, y: fy });
-    } else  if (myPhysics) {
+    } else if (myPhysics) {
       console.log('Using applyForce (likely terrain, otherPhysics undefined)');
       myPhysics.queueForce(myBody, { x: -fx, y: -fy });
     }
