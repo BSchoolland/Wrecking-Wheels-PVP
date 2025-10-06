@@ -7,6 +7,8 @@ import express from 'express';
 import cors from 'cors';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
+import path from 'path';
+import { Request, Response } from 'express';
 
 const app = express();
 const server = createServer(app);
@@ -17,13 +19,24 @@ app.use(cors());
 app.use(express.json());
 
 // Health check
-app.get('/health', (_req, res) => {
+app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: Date.now() });
 });
 
 // API routes will be added here
 const apiExt = process.env.NODE_ENV === 'production' ? '.js' : '.ts';
 app.use('/api/matchmaking', (await import(`./api/matchmaking${apiExt}`)).default);
+
+// Serve built frontend in production from the project's frontend/dist
+if (process.env.NODE_ENV === 'production') {
+  const staticPath = path.join(process.cwd(), 'frontend', 'dist');
+  app.use(express.static(staticPath));
+
+  // Fallback to index.html for client-side routing
+  app.get('*', (_req: Request, res: Response) => {
+    res.sendFile(path.join(staticPath, 'index.html'));
+  });
+}
 
 // WebSocket connection management
 interface WSClient {
@@ -36,7 +49,7 @@ interface WSClient {
 const clients = new Map<string, WSClient>();
 
 // WebSocket for lobby and signaling
-wss.on('connection', (ws) => {
+wss.on('connection', (ws: WebSocket) => {
   const clientId = `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   clients.set(clientId, { ws, id: clientId });
   
@@ -45,7 +58,7 @@ wss.on('connection', (ws) => {
   // Send client their ID
   ws.send(JSON.stringify({ type: 'connected', clientId }));
 
-  ws.on('message', (message) => {
+  ws.on('message', (message: string | Buffer) => {
     try {
       const data = JSON.parse(message.toString());
       if (process.env.NODE_ENV !== 'production') console.log('Received:', data.type, 'from', clientId);

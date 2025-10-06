@@ -363,14 +363,14 @@ export class PhysicsEngine {
   /**
    * Create a simple box body (for testing/contraptions)
    */
-  createBox(x: number, y: number, width: number, height: number, options?: Matter.IBodyDefinition): Matter.Body {
+  createBox(x: number, y: number, width: number, height: number, options?: Partial<Matter.IBodyDefinition>): Matter.Body {
     return Matter.Bodies.rectangle(x, y, width, height, options);
   }
 
   /**
    * Create a circle body (for wheels)
    */
-  createCircle(x: number, y: number, radius: number, options?: Matter.IBodyDefinition): Matter.Body {
+  createCircle(x: number, y: number, radius: number, options?: Partial<Matter.IBodyDefinition>): Matter.Body {
     return Matter.Bodies.circle(x, y, radius, options);
   }
 

@@ -3,7 +3,7 @@
  * Handles lobby creation, joining, and match coordination
  */
 
-import { Router } from 'express';
+import { Router, Request, Response } from 'express';
 
 const router = Router();
 
@@ -22,7 +22,7 @@ const lobbies = new Map<string, Lobby>();
 /**
  * Create a new lobby
  */
-router.post('/lobby/create', (req, res) => {
+router.post('/lobby/create', (req: Request, res: Response) => {
   const { hostId, maxPlayers = 2 } = req.body;
 
   if (!hostId) {
@@ -55,7 +55,7 @@ router.post('/lobby/create', (req, res) => {
 /**
  * Join an existing lobby
  */
-router.post('/lobby/join', (req, res) => {
+router.post('/lobby/join', (req: Request, res: Response) => {
   const { lobbyId, playerId } = req.body;
 
   if (!lobbyId || !playerId) {
@@ -99,7 +99,7 @@ router.post('/lobby/join', (req, res) => {
 /**
  * Get lobby status
  */
-router.get('/lobby/:lobbyId', (req, res) => {
+router.get('/lobby/:lobbyId', (req: Request, res: Response) => {
   const { lobbyId } = req.params;
   const lobby = lobbies.get(lobbyId);
 
@@ -120,7 +120,7 @@ router.get('/lobby/:lobbyId', (req, res) => {
 /**
  * List all available lobbies
  */
-router.get('/lobbies', (_req, res) => {
+router.get('/lobbies', (_req: Request, res: Response) => {
   const availableLobbies = Array.from(lobbies.values())
     .filter(lobby => lobby.status === 'waiting')
     .map(lobby => ({
@@ -136,7 +136,7 @@ router.get('/lobbies', (_req, res) => {
 /**
  * Leave a lobby
  */
-router.post('/lobby/leave', (req, res) => {
+router.post('/lobby/leave', (req: Request, res: Response) => {
   const { lobbyId, playerId } = req.body;
 
   if (!lobbyId || !playerId) {

@@ -102,6 +102,7 @@ export class NetworkManager {
     this.signalingWs = new WebSocket(url);
 
     this.signalingWs.onopen = () => {
+      if (import.meta.env.DEV) console.log(`[signaling] connected -> ${url}`);
     };
 
     this.signalingWs.onmessage = (event) => {
@@ -114,7 +115,10 @@ export class NetworkManager {
       this.connectionState = 'failed';
     };
 
-    this.signalingWs.onclose = () => {
+    this.signalingWs.onclose = (event) => {
+      if (import.meta.env.DEV) {
+        console.warn(`[signaling] WebSocket closed -> ${url} (code=${event.code} reason=${event.reason || 'n/a'})`);
+      }
       this.connectionState = 'disconnected';
     };
   }

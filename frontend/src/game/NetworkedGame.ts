@@ -145,7 +145,11 @@ export class NetworkedGame {
     
     // Initialize networking
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const signalingUrl = import.meta.env.VITE_SIGNALING_URL || `${protocol}//${window.location.hostname}:3001`;
+    const signalingUrl = (import.meta.env.VITE_SIGNALING_URL || import.meta.env.VITE_SIGNALING_SERVER || (
+      import.meta.env.DEV
+        ? `${protocol}//${window.location.hostname}:3001`
+        : `${protocol}//${window.location.host}`
+    ));
     this.network = new NetworkManager({
       role: this.role,
       lobbyId: config.lobbyId,

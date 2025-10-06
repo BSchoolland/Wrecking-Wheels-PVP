@@ -5,6 +5,9 @@
 
 echo "🎮 Starting Wrecking Wheels PVP..."
 
+# Force development mode for this session
+export NODE_ENV=development
+
 # Function to cleanup on exit
 cleanup() {
   echo ""
@@ -26,6 +29,17 @@ fi
 if [ ! -d "backend/node_modules" ]; then
   echo "📦 Installing backend dependencies..."
   cd backend && npm install && cd ..
+fi
+
+# Ensure dev dependencies (vite/tsx) are available
+if [ ! -x "frontend/node_modules/.bin/vite" ]; then
+  echo "📦 Installing frontend dev dependencies (vite)..."
+  (cd frontend && npm install --include=dev)
+fi
+
+if [ ! -x "backend/node_modules/.bin/tsx" ]; then
+  echo "📦 Installing backend dev dependencies (tsx)..."
+  (cd backend && npm install --include=dev)
 fi
 
 # Start backend
