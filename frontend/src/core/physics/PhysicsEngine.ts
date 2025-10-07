@@ -209,7 +209,7 @@ export class PhysicsEngine {
               const force = { x: nx * knock, y: ny * knock };
               if (physics) {
                 physics.queueForce(targetBody, force);
-              } else {
+              } else if (!targetBody.isStatic) {
                 Matter.Body.applyForce(targetBody, targetBody.position, force);
               }
 
@@ -289,7 +289,7 @@ export class PhysicsEngine {
       if (this.pendingForces.size > 0) {
         this.pendingForces.forEach((force, bodyId) => {
           const target = bodies.find(b => b.id === bodyId);
-          if (target) {
+          if (target && !target.isStatic) {
             Matter.Body.applyForce(target, target.position, force);
           }
         });
@@ -396,15 +396,19 @@ export class PhysicsEngine {
    * Apply a force to a body
    */
   applyForce(body: Matter.Body, force: Vector2D): void {
-    Matter.Body.applyForce(body, body.position, force);
+    if (!body.isStatic) {
+      Matter.Body.applyForce(body, body.position, force);
+    }
   }
 
   /**
    * Queue a force to be applied on the next physics tick
    */
   queueForce(body: Matter.Body, force: Vector2D): void {
-    const existing = this.pendingForces.get(body.id) || { x: 0, y: 0 };
-    this.pendingForces.set(body.id, { x: existing.x + force.x, y: existing.y + force.y });
+    if (!body.isStatic) {
+      const existing = this.pendingForces.get(body.id) || { x: 0, y: 0 };
+      this.pendingForces.set(body.id, { x: existing.x + force.x, y: existing.y + force.y });
+    }
   }
 
   /**

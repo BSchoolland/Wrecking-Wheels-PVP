@@ -269,17 +269,14 @@ export class NetworkManager {
 
     if (signal.type === 'offer') {
       // Received offer, send answer
-      console.log(`[${this.role}] Received offer, setting remote description and sending answer`);
       await this.peerConnection.setRemoteDescription(signal.offer);
       const answer = await this.peerConnection.createAnswer();
       this.sendSignal({ type: 'answer', answer });
     } else if (signal.type === 'answer') {
       // Received answer
-      console.log(`[${this.role}] Received answer, setting remote description`);
       await this.peerConnection.setRemoteDescription(signal.answer);
     } else if (signal.type === 'ice-candidate') {
       // Received ICE candidate
-      console.log(`[${this.role}] Adding ICE candidate`);
       await this.peerConnection.addIceCandidate(signal.candidate);
     }
   }

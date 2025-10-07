@@ -201,6 +201,10 @@ export class Renderer {
       } else {
         // Polygon
         const vertices = body.vertices;
+        if (!vertices || vertices.length === 0) {
+          this.ctx.restore();
+          return;
+        }
         this.ctx.beginPath();
         this.ctx.moveTo(vertices[0].x, vertices[0].y);
         for (let i = 1; i < vertices.length; i++) {
@@ -221,6 +225,11 @@ export class Renderer {
           this.ctx.fill();
         } else {
           const vertices = body.vertices;
+          if (!vertices || vertices.length === 0) {
+            this.ctx.globalAlpha = 1;
+            this.ctx.restore();
+            return;
+          }
           this.ctx.beginPath();
           this.ctx.moveTo(vertices[0].x, vertices[0].y);
           for (let i = 1; i < vertices.length; i++) {

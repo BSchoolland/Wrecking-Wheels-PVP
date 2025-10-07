@@ -109,7 +109,7 @@ export class PeerConnection {
 
     this.dataChannel = this.connection.createDataChannel('game-state', {
       ordered: false, // Allow out-of-order delivery for lower latency
-      maxRetransmits: 0, // Don't retransmit old state
+      // Reliable delivery (no maxRetransmits) to prevent packet loss at high latency
     });
 
     this.setupDataChannelHandlers();
@@ -140,6 +140,9 @@ export class PeerConnection {
     this.dataChannel.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data) as NetworkMessage;
+        if (message.type === 'state') {
+          console.log(`[${this.role}] Received state packet at ${Date.now()}`);
+        }
         this.onMessage(message);
       } catch (error) {
         console.error('Failed to parse message:', error);

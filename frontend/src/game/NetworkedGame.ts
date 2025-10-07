@@ -90,17 +90,25 @@ export class NetworkedGame {
   
   // Client-side: cache vertices for bodies (since they don't change)
   private verticesCache: Map<string, Array<{ x: number; y: number }>> = new Map();
-  
-  // Host-side: track which bodies we've sent full data for
-  private sentBodies: Set<string> = new Set();
 
   // Client-side interpolation buffer
   private snapshotBuffer: NetworkSnapshot[] = [];
-  private interpolationDelay = 100; // ms to buffer behind for smoothness
+  private interpolationDelay = 100; // ms to buffer behind for smoothness (adaptive)
 
   private latestSnapshot: NetworkSnapshot | null = null;
   private gameEnded = false;
   private onGameOver?: (winner: 'host' | 'client') => void;
+
+  // Packet rate tracking (client only)
+  private packetsReceivedThisSecond = 0;
+  private handleStateUpdateCallsThisSecond = 0;
+  private lastPacketRateLog = 0;
+  private recentPacketRate = 20; // Moving average of packet rate
+
+  // Host-side: track when vertices were last sent for each body
+  private lastVerticesSent: Map<string, number> = new Map();
+  private readonly verticesResendInterval = 2000; // Resend vertices every 2000ms
+  private readonly maxVerticesPerFrame = 5; // Limit vertices sent per frame to keep packets small
 
   // Cooldowns per player
   private buildCooldowns: Map<string, number> = new Map();
@@ -132,6 +140,9 @@ export class NetworkedGame {
     this.lastResourceUpdate = Date.now();
     this._myResourcesCache = { energy: 0.0 };
     this.energy = 0;
+    
+    // Initialize packet rate tracking
+    this.lastPacketRateLog = Date.now();
     
     // Initialize renderer
     this.renderer = new Renderer(this.canvas);
@@ -392,6 +403,11 @@ export class NetworkedGame {
    */
   private handleStateUpdate(state: GameState): void {
     if (this.role === 'host') return;
+    
+    // Track packet rate
+    this.handleStateUpdateCallsThisSecond++;
+    this.packetsReceivedThisSecond++;
+    
     // Treat incoming state as a network snapshot for interpolation
     const snapshot = { ...(state as unknown as NetworkSnapshot), _receivedAt: Date.now() } as NetworkSnapshot;
     
@@ -445,10 +461,23 @@ export class NetworkedGame {
       });
     }
 
-    // Keep only the last ~1s of snapshots
-    const cutoff = Date.now() - 1000;
-    while (this.snapshotBuffer.length && ((this.snapshotBuffer[0].timestamp ?? this.snapshotBuffer[0]._receivedAt) as number) < cutoff) {
+    // Keep snapshots based on current interpolation delay + buffer for jitter calculation
+    // Need at least 10 snapshots for adaptive delay calculation, or keep last 2× interpolation delay worth
+    const minKeepTime = Math.max(this.interpolationDelay * 2, 500); // At least 500ms or 2× delay
+    const cutoff = Date.now() - minKeepTime;
+    
+    // Use _receivedAt (client clock) consistently, and always keep at least 10 snapshots
+    while (this.snapshotBuffer.length > 1 && this.snapshotBuffer[0]._receivedAt! < cutoff) {
       this.snapshotBuffer.shift();
+    }
+    
+    // Limit buffer size to prevent unbounded growth during high latency
+    // If buffer exceeds 100 snapshots, we're accumulating too much lag - jump forward
+    const maxBufferSize = 100;
+    if (this.snapshotBuffer.length > maxBufferSize) {
+      const discardCount = this.snapshotBuffer.length - 50; // Keep most recent 50
+      this.snapshotBuffer.splice(0, discardCount);
+      if (import.meta.env.DEV) console.log(`Discarded ${discardCount} old snapshots to prevent lag accumulation`);
     }
   }
 
@@ -502,23 +531,47 @@ export class NetworkedGame {
     if (!this.physics) return null;
 
     const allBodies = this.physics.getAllBodies();
+    const now = Date.now();
+    
+    // Determine which bodies should have vertices sent this frame
+    const bodiesToSendVertices: Set<string> = new Set();
+    const bodiesNeedingResend: Array<{ id: string; lastSent: number }> = [];
+    
+    allBodies.forEach(body => {
+      const id = (body as ExtendedBody).customId || `static-${body.id}`;
+      const lastSent = this.lastVerticesSent.get(id);
+      
+      if (!lastSent) {
+        // New body - always send vertices
+        bodiesToSendVertices.add(id);
+      } else if (now - lastSent > this.verticesResendInterval) {
+        // Body needs resend
+        bodiesNeedingResend.push({ id, lastSent });
+      }
+    });
+    
+    // Sort by oldest first and add up to maxVerticesPerFrame
+    bodiesNeedingResend.sort((a, b) => a.lastSent - b.lastSent);
+    const resendCount = Math.min(this.maxVerticesPerFrame - bodiesToSendVertices.size, bodiesNeedingResend.length);
+    for (let i = 0; i < resendCount; i++) {
+      bodiesToSendVertices.add(bodiesNeedingResend[i].id);
+    }
     
     const snapshot: NetworkSnapshot = {
       timestamp: Date.now(),
       bodies: allBodies.map(body => {
         const id = (body as ExtendedBody).customId || `static-${body.id}`;
-        const isNew = !this.sentBodies.has(id);
+        const shouldSendVertices = bodiesToSendVertices.has(id);
         
-        // Send vertices only for new bodies
-        if (isNew) {
-          this.sentBodies.add(id);
+        if (shouldSendVertices) {
+          this.lastVerticesSent.set(id, now);
         }
         
         return {
           id,
           position: { x: body.position.x, y: body.position.y },
           angle: body.angle,
-          vertices: isNew ? body.vertices.map((v: Matter.Vector) => ({ x: v.x, y: v.y })) : undefined,
+          vertices: shouldSendVertices ? body.vertices.map((v: Matter.Vector) => ({ x: v.x, y: v.y })) : undefined,
           circleRadius: body.circleRadius,
           isStatic: body.isStatic,
           render: {
@@ -549,9 +602,9 @@ export class NetworkedGame {
     
     // Clean up tracking for removed bodies
     const currentBodyIds = new Set(snapshot.bodies.map(b => b.id));
-    this.sentBodies.forEach(id => {
+    this.lastVerticesSent.forEach((_, id) => {
       if (!currentBodyIds.has(id)) {
-        this.sentBodies.delete(id);
+        this.lastVerticesSent.delete(id);
       }
     });
     
@@ -642,12 +695,33 @@ export class NetworkedGame {
       }
     }
 
+    // Client: Log packet rate every second
+    if (this.role === 'client' && now - this.lastPacketRateLog >= 1000) {
+      this.recentPacketRate = this.recentPacketRate * 0.7 + this.packetsReceivedThisSecond * 0.3;
+      this.packetsReceivedThisSecond = 0;
+      this.handleStateUpdateCallsThisSecond = 0;
+      this.lastPacketRateLog = now;
+    }
+
     // Render
     if (this.role === 'host' && this.physics) {
       // Host renders from physics engine
       this.renderer.renderPhysics(this.physics.getAllBodies());
     } else {
-      // Client: render interpolated snapshot
+      // Client: render interpolated snapshot with adaptive delay
+      let targetDelay = this.calculateAdaptiveDelay();
+      
+      // If packet rate is very low, reduce interpolation delay to show packets immediately
+      // This prevents being stuck far in the past when only getting a few packets/sec
+      if (this.recentPacketRate < 8) {
+        targetDelay = Math.min(targetDelay, 50); // Cap at 50ms when packet rate is low
+        if (import.meta.env.DEV && Math.random() < 0.1) {
+          console.log(`Low packet rate (${this.recentPacketRate.toFixed(1)}/sec) - reducing interpolation delay to ${targetDelay}ms`);
+        }
+      }
+      
+      // Smoothly adjust delay over time to prevent sudden jumps (2% per frame = ~50 frames to adjust)
+      this.interpolationDelay = this.interpolationDelay * 0.98 + targetDelay * 0.02;
       const renderTime = now - this.interpolationDelay;
       const bodies = this.getInterpolatedBodies(renderTime);
       
@@ -658,6 +732,128 @@ export class NetworkedGame {
   };
 
   /**
+   * Calculate adaptive interpolation delay based on network jitter
+   */
+  private calculateAdaptiveDelay(): number {
+    if (this.snapshotBuffer.length < 3) return 100; // fallback to default
+    
+    // Measure intervals between last N snapshots
+    const sampleSize = Math.min(10, this.snapshotBuffer.length);
+    const intervals: number[] = [];
+    
+    for (let i = this.snapshotBuffer.length - sampleSize; i < this.snapshotBuffer.length - 1; i++) {
+      const dt = this.snapshotBuffer[i + 1]._receivedAt! - this.snapshotBuffer[i]._receivedAt!;
+      intervals.push(dt);
+    }
+    
+    const avg = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+    const maxInterval = Math.max(...intervals);
+    const variance = intervals.reduce((sum, val) => sum + Math.pow(val - avg, 2), 0) / intervals.length;
+    const jitter = Math.sqrt(variance);
+    
+    // Use worst-case (max interval) for more stability at high latency
+    // This prevents running out of buffer when packets are delayed
+    const calculatedDelay = Math.max(avg + (2 * jitter), maxInterval) + 50; // +50ms safety margin
+    
+    // Clamp between 100ms (low latency) and 1000ms (high latency)
+    return Math.max(100, Math.min(1000, calculatedDelay));
+  }
+
+  /**
+   * Transform cached local vertices to world coordinates
+   */
+  private transformCachedVertices(bodyId: string, position: { x: number; y: number }, angle: number): Array<{ x: number; y: number }> {
+    const localVerts = this.verticesCache.get(bodyId) || [];
+    const cos = Math.cos(angle);
+    const sin = Math.sin(angle);
+    return localVerts.map(v => ({
+      x: position.x + (v.x * cos - v.y * sin),
+      y: position.y + (v.x * sin + v.y * cos)
+    }));
+  }
+
+  /**
+   * Create a fake Matter.Body for rendering
+   */
+  private createFakeBody(bodyId: string, bodyData: SerializableBody, vertices: Array<{ x: number; y: number }>): Matter.Body {
+    const hashId = (s: string): number => {
+      let h = 0;
+      for (let i = 0; i < s.length; i++) {
+        h = ((h << 5) - h) + s.charCodeAt(i);
+        h |= 0;
+      }
+      return Math.abs(h) + 1;
+    };
+
+    const fakeBody: Partial<Matter.Body> & { id: number } = {
+      id: hashId(bodyId),
+      position: bodyData.position,
+      angle: bodyData.angle,
+      vertices,
+      circleRadius: bodyData.circleRadius,
+      isStatic: bodyData.isStatic,
+      render: bodyData.render ?? { fillStyle: '#3498db' },
+    };
+    return fakeBody as Matter.Body;
+  }
+
+  /**
+   * Extrapolate bodies forward in time based on velocity from last two snapshots
+   */
+  private extrapolateBodies(targetTime: number): Matter.Body[] {
+    const latest = this.snapshotBuffer[this.snapshotBuffer.length - 1];
+    const previous = this.snapshotBuffer[this.snapshotBuffer.length - 2];
+    
+    const latestTime = (latest.timestamp ?? latest._receivedAt) as number;
+    const prevTime = (previous.timestamp ?? previous._receivedAt) as number;
+    const dt = (latestTime - prevTime) / 1000; // seconds
+    const extrapolationTime = (targetTime - latestTime) / 1000; // seconds to extrapolate
+    
+    // Limit extrapolation to prevent wild predictions
+    const clampedExtrapolation = Math.min(extrapolationTime, 0.2); // max 200ms
+    
+    const result: Matter.Body[] = [];
+    
+    latest.bodies.forEach((latestBody) => {
+      const prevBody = previous.bodies.find(b => b.id === latestBody.id);
+      
+      // If body just appeared, don't extrapolate
+      if (!prevBody || dt === 0) {
+        const vertices = latestBody.vertices || this.transformCachedVertices(latestBody.id, latestBody.position, latestBody.angle);
+        result.push(this.createFakeBody(latestBody.id, latestBody, vertices));
+        return;
+      }
+      
+      // Static bodies don't move
+      if (latestBody.isStatic) {
+        const vertices = latestBody.vertices || this.transformCachedVertices(latestBody.id, latestBody.position, latestBody.angle);
+        result.push(this.createFakeBody(latestBody.id, latestBody, vertices));
+        return;
+      }
+      
+      // Calculate velocity
+      const vx = (latestBody.position.x - prevBody.position.x) / dt;
+      const vy = (latestBody.position.y - prevBody.position.y) / dt;
+      const angularV = (latestBody.angle - prevBody.angle) / dt;
+      
+      // Extrapolate position
+      const extrapolatedBody: SerializableBody = {
+        ...latestBody,
+        position: {
+          x: latestBody.position.x + vx * clampedExtrapolation,
+          y: latestBody.position.y + vy * clampedExtrapolation,
+        },
+        angle: latestBody.angle + angularV * clampedExtrapolation,
+      };
+      
+      const vertices = this.transformCachedVertices(latestBody.id, extrapolatedBody.position, extrapolatedBody.angle);
+      result.push(this.createFakeBody(latestBody.id, extrapolatedBody, vertices));
+    });
+    
+    return result;
+  }
+
+  /**
    * Build interpolated Matter-like bodies for rendering on the client
    */
   private getInterpolatedBodies(targetTime: number): Matter.Body[] {
@@ -665,26 +861,46 @@ export class NetworkedGame {
       return Array.from(this.bodies.values());
     }
 
+    const latestSnapshot = this.snapshotBuffer[this.snapshotBuffer.length - 1];
+    // Use _receivedAt exclusively to avoid clock skew between host and client
+    const latestTime = latestSnapshot._receivedAt!;
+    
+    // If targetTime is past our latest snapshot, just hold at latest position
+    // (Extrapolation causes wobble when transitioning back to interpolation)
+    if (targetTime > latestTime) {
+      targetTime = latestTime; // Clamp to latest available
+    }
+
     // Buffer is kept ordered on push; no per-frame sort
 
     // Find snapshots bracketing targetTime
-    let prev = this.snapshotBuffer[0];
+    let prev = this.snapshotBuffer[this.snapshotBuffer.length - 1];
     let next = this.snapshotBuffer[this.snapshotBuffer.length - 1];
+    let foundBracket = false;
 
     for (let i = 0; i < this.snapshotBuffer.length - 1; i++) {
       const a = this.snapshotBuffer[i];
       const b = this.snapshotBuffer[i + 1];
-      const ta = (a.timestamp ?? a._receivedAt);
-      const tb = (b.timestamp ?? b._receivedAt);
+      // Use _receivedAt exclusively to avoid clock skew between host and client
+      const ta = a._receivedAt!;
+      const tb = b._receivedAt!;
       if (ta <= targetTime && targetTime <= tb) {
         prev = a;
         next = b;
+        foundBracket = true;
         break;
       }
     }
 
-    const tPrev = (prev.timestamp ?? prev._receivedAt);
-    const tNext = (next.timestamp ?? next._receivedAt);
+    // If no bracket found (targetTime too old), just use latest snapshot
+    if (!foundBracket) {
+      prev = this.snapshotBuffer[this.snapshotBuffer.length - 1];
+      next = this.snapshotBuffer[this.snapshotBuffer.length - 1];
+    }
+
+    // Use _receivedAt exclusively to avoid clock skew between host and client
+    const tPrev = prev._receivedAt!;
+    const tNext = next._receivedAt!;
     const alpha = tNext > tPrev ? (targetTime - tPrev) / (tNext - tPrev) : 0;
     const clampedAlpha = Math.max(0, Math.min(1, alpha));
 
@@ -710,6 +926,13 @@ export class NetworkedGame {
       const a = prevMap.get(id) || nextMap.get(id);
       const b = nextMap.get(id) || prevMap.get(id);
       if (!a || !b) return;
+
+      // Skip interpolation for static bodies - just use latest position
+      if (a.isStatic) {
+        const vertices = b.vertices || this.transformCachedVertices(id, b.position, b.angle);
+        result.push(this.createFakeBody(id, b, vertices));
+        return;
+      }
 
       const lerp = (x: number, y: number, t: number) => x + (y - x) * t;
 
