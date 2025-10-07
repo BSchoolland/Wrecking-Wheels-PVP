@@ -12,7 +12,7 @@ import { Request, Response } from 'express';
 
 const app = express();
 const server = createServer(app);
-const wss = new WebSocketServer({ server });
+const wss = new WebSocketServer({ server, path: '/ws' });
 
 // Middleware
 app.use(cors());
@@ -29,7 +29,7 @@ app.use('/api/matchmaking', (await import(`./api/matchmaking${apiExt}`)).default
 
 // Serve built frontend in production from the project's frontend/dist
 if (process.env.NODE_ENV === 'production') {
-  const staticPath = path.join(process.cwd(), 'frontend', 'dist');
+  const staticPath = path.join(process.cwd(), '..', 'frontend', 'dist');
   app.use(express.static(staticPath));
 
   // Fallback to index.html for client-side routing
@@ -53,7 +53,7 @@ wss.on('connection', (ws: WebSocket) => {
   const clientId = `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   clients.set(clientId, { ws, id: clientId });
   
-  if (process.env.NODE_ENV !== 'production') console.log(`Client connected: ${clientId}`);
+  console.log(`[server] Client connected: ${clientId}`);
 
   // Send client their ID
   ws.send(JSON.stringify({ type: 'connected', clientId }));
@@ -61,7 +61,7 @@ wss.on('connection', (ws: WebSocket) => {
   ws.on('message', (message: string | Buffer) => {
     try {
       const data = JSON.parse(message.toString());
-      if (process.env.NODE_ENV !== 'production') console.log('Received:', data.type, 'from', clientId);
+      console.log(`[server] Received: ${data.type} from ${clientId}`);
 
       switch (data.type) {
         case 'join-lobby':
@@ -78,7 +78,7 @@ wss.on('connection', (ws: WebSocket) => {
           break;
         
         default:
-          if (process.env.NODE_ENV !== 'production') console.log('Unknown message type:', data.type);
+          console.log(`[server] Unknown message type: ${data.type}`);
       }
     } catch (error) {
       console.error('Error parsing message:', error);
@@ -86,7 +86,7 @@ wss.on('connection', (ws: WebSocket) => {
   });
 
   ws.on('close', () => {
-    if (process.env.NODE_ENV !== 'production') console.log(`Client disconnected: ${clientId}`);
+    console.log(`[server] Client disconnected: ${clientId}`);
     handleLeaveLobby(clientId);
     clients.delete(clientId);
   });
@@ -120,7 +120,7 @@ function handleJoinLobby(clientId: string, lobbyId: string, role: 'host' | 'clie
     }));
   });
 
-  if (process.env.NODE_ENV !== 'production') console.log(`Client ${clientId} joined lobby ${lobbyId} as ${role}`);
+  console.log(`[server] Client ${clientId} joined lobby ${lobbyId} as ${role} (${lobbyClients.length} other peer(s) already in lobby)`);
 }
 
 function handleSignal(fromClientId: string, data: { targetId?: string; signal: unknown }) {
@@ -166,8 +166,6 @@ function handleLeaveLobby(clientId: string) {
 const PORT = process.env.PORT || 3001;
 
 server.listen(PORT, () => {
-  if (process.env.NODE_ENV !== 'production') {
-    console.log(`Server running on port ${PORT}`);
-    console.log(`WebSocket server ready`);
-  }
+  console.log(`[server] Server running on port ${PORT}`);
+  console.log(`[server] WebSocket server ready on path /ws`);
 });

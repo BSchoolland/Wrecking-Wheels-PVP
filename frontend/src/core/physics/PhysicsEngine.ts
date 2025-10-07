@@ -50,12 +50,11 @@ export class PhysicsEngine {
 
     // Create team bases as non-collidable translucent sensors with HP
     const BASE_SIZE = BUILDER_CONSTANTS.GRID_SIZE * 3;
-    const BASE_HEIGHT = BASE_SIZE * 3;
+    const BASE_HEIGHT = 1250; // Tall enough to span both layers
     const BASE_OFFSET_RATIO = 0.15; // 15% into the map
     const leftBaseX = WORLD_BOUNDS.WIDTH * BASE_OFFSET_RATIO;
     const rightBaseX = WORLD_BOUNDS.WIDTH * (1 - BASE_OFFSET_RATIO);
-    const groundY = WORLD_BOUNDS.HEIGHT + 25; // from MapLoader, ground center
-    const baseY = groundY - 60 - BASE_SIZE; // slightly above ground, adjusted for taller height
+    const baseY = 200; // Centered between upper (450) and lower (800) ground levels
 
     this.baseHost = Matter.Bodies.rectangle(leftBaseX, baseY, BASE_SIZE, BASE_HEIGHT, {
       isStatic: true,

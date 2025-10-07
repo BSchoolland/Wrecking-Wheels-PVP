@@ -54,6 +54,7 @@ function App() {
   const [hand, setHand] = useState<ContraptionSaveData[]>([]);
   const [gameOver, setGameOver] = useState<string | null>(null);
   const [energy, setEnergy] = useState(0);
+  const [health, setHealth] = useState({ mine: 10, enemy: 10 });
   
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<NetworkedGame | null>(null);
@@ -237,14 +238,16 @@ function App() {
         gameRef.current.setSelectedContraption(selectedContraption);
       }
 
-      // Poll energy for UI display
-      const energyInterval = setInterval(() => {
+      // Poll energy and health for UI display
+      const uiInterval = setInterval(() => {
         const currentEnergy = gameRef.current?.getMyEnergy() ?? 0;
+        const currentHealth = gameRef.current?.getBaseHealth() ?? { mine: 10, enemy: 10 };
         setEnergy(currentEnergy);
+        setHealth(currentHealth);
       }, 100);
 
       return () => {
-        clearInterval(energyInterval);
+        clearInterval(uiInterval);
         if (view !== 'game' && gameRef.current) {
           gameRef.current.destroy();
           gameRef.current = null;
@@ -360,6 +363,38 @@ function App() {
               <span>Left Click: Spawn contraption</span>
               <span>Right/Middle Click + Drag: Pan camera</span>
               <span>Mouse Wheel: Zoom in/out</span>
+            </div>
+            <div className="health-display">
+              <div className="health-bar-container">
+                <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#3498db' }}>You</span>
+                <div className="health-bar-wrapper">
+                  <div className="health-bar-bg">
+                    <div 
+                      className="health-bar-fill" 
+                      style={{ 
+                        width: `${(health.mine / 10) * 100}%`,
+                        backgroundColor: '#3498db'
+                      }}
+                    />
+                  </div>
+                  <span className="health-text">{health.mine}/10</span>
+                </div>
+              </div>
+              <div className="health-bar-container">
+                <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#e74c3c' }}>Enemy</span>
+                <div className="health-bar-wrapper">
+                  <div className="health-bar-bg">
+                    <div 
+                      className="health-bar-fill" 
+                      style={{ 
+                        width: `${(health.enemy / 10) * 100}%`,
+                        backgroundColor: '#e74c3c'
+                      }}
+                    />
+                  </div>
+                  <span className="health-text">{health.enemy}/10</span>
+                </div>
+              </div>
             </div>
             <div className="energy-display">
               <span style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>⚡ {energy.toFixed(1)}/20</span>

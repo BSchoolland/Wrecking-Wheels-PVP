@@ -99,10 +99,11 @@ export class NetworkManager {
    */
   private connectToSignalingServer(url: string): void {
     this.connectionState = 'connecting';
+    console.log(`[${this.role}] Attempting to connect to signaling server: ${url}`);
     this.signalingWs = new WebSocket(url);
 
     this.signalingWs.onopen = () => {
-      if (import.meta.env.DEV) console.log(`[signaling] connected -> ${url}`);
+      console.log(`[${this.role}] ✓ Signaling server connected: ${url}`);
     };
 
     this.signalingWs.onmessage = (event) => {
@@ -111,14 +112,12 @@ export class NetworkManager {
     };
 
     this.signalingWs.onerror = (error) => {
-      console.error('Signaling WebSocket error:', error);
+      console.error(`[${this.role}] ✗ Signaling WebSocket error:`, error);
       this.connectionState = 'failed';
     };
 
     this.signalingWs.onclose = (event) => {
-      if (import.meta.env.DEV) {
-        console.warn(`[signaling] WebSocket closed -> ${url} (code=${event.code} reason=${event.reason || 'n/a'})`);
-      }
+      console.warn(`[${this.role}] Signaling WebSocket closed: ${url} (code=${event.code} reason=${event.reason || 'n/a'})`);
       this.connectionState = 'disconnected';
     };
   }
@@ -132,6 +131,7 @@ export class NetworkManager {
       case 'connected':
         // Server assigned us an ID
         this.myClientId = message.clientId;
+        console.log(`[${this.role}] Assigned client ID: ${this.myClientId}`);
         
         // Join the lobby
         this.joinLobby();
@@ -140,19 +140,29 @@ export class NetworkManager {
       case 'peer-joined':
         // Another peer joined the lobby
         this.peerId = message.peerId;
+        console.log(`[${this.role}] Peer joined: ${message.peerId} (role: ${message.peerRole})`);
         
         // If we're the host, initiate WebRTC connection
         if (this.role === 'host') {
+          console.log(`[${this.role}] Initiating WebRTC connection to client...`);
           await this.initiateWebRTC();
         }
         break;
 
       case 'signal':
         // WebRTC signaling data from peer
+        if (message.signal.type === 'ice-candidate') {
+          const cand = message.signal.candidate as RTCIceCandidateInit;
+          const candType = cand.candidate ? (cand.candidate.includes('typ relay') ? 'relay' : cand.candidate.includes('typ srflx') ? 'srflx' : cand.candidate.includes('typ host') ? 'host' : 'unknown') : 'null';
+          console.log(`[${this.role}] Received ICE candidate from peer: ${candType}`, cand.candidate ? cand.candidate.substring(0, 100) : 'null');
+        } else {
+          console.log(`[${this.role}] Received WebRTC signal from ${message.fromId}: ${message.signal.type}`);
+        }
         await this.handleWebRTCSignal(message.fromId, message.signal);
         break;
 
       case 'peer-left':
+        console.log(`[${this.role}] Peer left: ${message.peerId}`);
         this.peerId = null;
         this.peerConnection?.close();
         this.peerConnection = null;
@@ -167,6 +177,7 @@ export class NetworkManager {
   private joinLobby(): void {
     if (!this.signalingWs) return;
 
+    console.log(`[${this.role}] Joining lobby: ${this.lobbyId}`);
     this.signalingWs.send(JSON.stringify({
       type: 'join-lobby',
       lobbyId: this.lobbyId,
@@ -194,10 +205,12 @@ export class NetworkManager {
         }
       },
       onConnect: () => {
+        console.log(`[${this.role}] ✓ WebRTC peer connection established!`);
         this.connectionState = 'connected';
         this.onConnected();
       },
       onDisconnect: () => {
+        console.log(`[${this.role}] WebRTC peer connection closed`);
         this.connectionState = 'disconnected';
         this.onDisconnected();
       },
@@ -212,6 +225,7 @@ export class NetworkManager {
 
     // Create and send offer
     const offer = await this.peerConnection.createOffer();
+    console.log(`[${this.role}] Sending WebRTC offer to peer`);
     this.sendSignal({ type: 'offer', offer });
   }
 
@@ -255,14 +269,17 @@ export class NetworkManager {
 
     if (signal.type === 'offer') {
       // Received offer, send answer
+      console.log(`[${this.role}] Received offer, setting remote description and sending answer`);
       await this.peerConnection.setRemoteDescription(signal.offer);
       const answer = await this.peerConnection.createAnswer();
       this.sendSignal({ type: 'answer', answer });
     } else if (signal.type === 'answer') {
       // Received answer
+      console.log(`[${this.role}] Received answer, setting remote description`);
       await this.peerConnection.setRemoteDescription(signal.answer);
     } else if (signal.type === 'ice-candidate') {
       // Received ICE candidate
+      console.log(`[${this.role}] Adding ICE candidate`);
       await this.peerConnection.addIceCandidate(signal.candidate);
     }
   }

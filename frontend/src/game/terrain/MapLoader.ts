@@ -10,15 +10,25 @@ import { WORLD_BOUNDS } from '@shared/constants/physics';
  * This is called by PhysicsEngine constructor automatically
  */
 export function createMapBoundaries(): Matter.Body[] {
-  const ground = Matter.Bodies.rectangle(
+  // Lower ground
+  const groundLower = Matter.Bodies.rectangle(
     WORLD_BOUNDS.WIDTH / 2,
     WORLD_BOUNDS.HEIGHT + 25,
     WORLD_BOUNDS.WIDTH,
     50,
-    { isStatic: true, label: 'ground' }
+    { isStatic: true, label: 'ground-lower' }
   );
 
-  return [ground];
+  // Upper ground (second layer)
+  const groundUpper = Matter.Bodies.rectangle(
+    WORLD_BOUNDS.WIDTH / 2,
+    0,
+    WORLD_BOUNDS.WIDTH,
+    50,
+    { isStatic: true, label: 'ground-upper' }
+  );
+
+  return [groundLower, groundUpper];
 }
 
 /**

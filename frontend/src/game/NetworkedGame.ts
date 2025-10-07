@@ -23,7 +23,7 @@ interface SerializableBody {
   id: string;
   position: { x: number; y: number };
   angle: number;
-  vertices: Array<{ x: number; y: number }>;
+  vertices?: Array<{ x: number; y: number }>;
   circleRadius?: number;
   isStatic: boolean;
   render: {
@@ -87,6 +87,12 @@ export class NetworkedGame {
   
   // Effect events to sync (host only)
   private effectEvents: EffectEvent[] = [];
+  
+  // Client-side: cache vertices for bodies (since they don't change)
+  private verticesCache: Map<string, Array<{ x: number; y: number }>> = new Map();
+  
+  // Host-side: track which bodies we've sent full data for
+  private sentBodies: Set<string> = new Set();
 
   // Client-side interpolation buffer
   private snapshotBuffer: NetworkSnapshot[] = [];
@@ -129,6 +135,7 @@ export class NetworkedGame {
     
     // Initialize renderer
     this.renderer = new Renderer(this.canvas);
+    this.renderer.setPlayerRole(this.role);
     // Mirror view for clients so they perceive themselves on the right moving left
     if (this.role === 'client') {
       this.renderer.camera.mirrorX = true;
@@ -149,7 +156,7 @@ export class NetworkedGame {
       import.meta.env.DEV
         ? `${protocol}//${window.location.hostname}:3001`
         : `${protocol}//${window.location.host}`
-    ));
+    )) + '/ws';
     this.network = new NetworkManager({
       role: this.role,
       lobbyId: config.lobbyId,
@@ -238,10 +245,17 @@ export class NetworkedGame {
       // Convert screen coordinates to world coordinates using camera
       const worldPos = this.renderer.camera.screenToWorld(e.clientX, e.clientY);
       
+      // Snap to nearest ground level (upper or lower)
+      const UPPER_GROUND = -450; // Just above upper platform
+      const LOWER_GROUND = 450; // Just above lower platform
+      const snapY = Math.abs(worldPos.y - UPPER_GROUND) < Math.abs(worldPos.y - LOWER_GROUND) 
+        ? UPPER_GROUND 
+        : LOWER_GROUND;
+      
       const command: SpawnBoxCommand = {
         type: 'spawn-box',
         playerId: this.playerId,
-        position: { x: worldPos.x, y: 450 },
+        position: { x: worldPos.x, y: snapY },
         contraption: this.savedContraption!,
       };
 
@@ -380,6 +394,26 @@ export class NetworkedGame {
     if (this.role === 'host') return;
     // Treat incoming state as a network snapshot for interpolation
     const snapshot = { ...(state as unknown as NetworkSnapshot), _receivedAt: Date.now() } as NetworkSnapshot;
+    
+    // Cache vertices in LOCAL coordinates (relative to body center, unrotated)
+    snapshot.bodies.forEach(body => {
+      if (body.vertices && body.vertices.length > 0 && !this.verticesCache.has(body.id)) {
+        // Convert world vertices to local coordinates
+        const localVertices = body.vertices.map(v => {
+          const dx = v.x - body.position.x;
+          const dy = v.y - body.position.y;
+          // Rotate back by -angle to get unrotated local coords
+          const cos = Math.cos(-body.angle);
+          const sin = Math.sin(-body.angle);
+          return {
+            x: dx * cos - dy * sin,
+            y: dx * sin + dy * cos
+          };
+        });
+        this.verticesCache.set(body.id, localVertices);
+      }
+    });
+    
     this.snapshotBuffer.push(snapshot);
     this.latestSnapshot = snapshot;
 
@@ -471,30 +505,40 @@ export class NetworkedGame {
     
     const snapshot: NetworkSnapshot = {
       timestamp: Date.now(),
-      bodies: allBodies.map(body => ({
-        id: (body as ExtendedBody).customId || `static-${body.id}`,
-        position: { x: body.position.x, y: body.position.y },
-        angle: body.angle,
-        vertices: body.vertices.map((v: Matter.Vector) => ({ x: v.x, y: v.y })),
-        circleRadius: body.circleRadius,
-        isStatic: body.isStatic,
-        render: {
-          fillStyle: (body.render as Matter.IBodyRenderOptions)?.fillStyle || (body.isStatic ? '#555555' : '#3498db'),
-          healthPercent: (() => {
-            const block = (body as unknown as { block?: { health: number; maxHealth: number } }).block;
-            if (block && block.maxHealth > 0) {
-              return Math.max(0, Math.min(1, block.health / block.maxHealth));
-            }
-            if (body.label === 'base-host') {
-              return this.physics!.getBaseHp('host') / 10;
-            }
-            if (body.label === 'base-client') {
-              return this.physics!.getBaseHp('client') / 10;
-            }
-            return undefined;
-          })(),
-        },
-      })),
+      bodies: allBodies.map(body => {
+        const id = (body as ExtendedBody).customId || `static-${body.id}`;
+        const isNew = !this.sentBodies.has(id);
+        
+        // Send vertices only for new bodies
+        if (isNew) {
+          this.sentBodies.add(id);
+        }
+        
+        return {
+          id,
+          position: { x: body.position.x, y: body.position.y },
+          angle: body.angle,
+          vertices: isNew ? body.vertices.map((v: Matter.Vector) => ({ x: v.x, y: v.y })) : undefined,
+          circleRadius: body.circleRadius,
+          isStatic: body.isStatic,
+          render: {
+            fillStyle: (body.render as Matter.IBodyRenderOptions)?.fillStyle || (body.isStatic ? '#555555' : '#3498db'),
+            healthPercent: (() => {
+              const block = (body as unknown as { block?: { health: number; maxHealth: number } }).block;
+              if (block && block.maxHealth > 0) {
+                return Math.max(0, Math.min(1, block.health / block.maxHealth));
+              }
+              if (body.label === 'base-host') {
+                return this.physics!.getBaseHp('host') / 10;
+              }
+              if (body.label === 'base-client') {
+                return this.physics!.getBaseHp('client') / 10;
+              }
+              return undefined;
+            })(),
+          },
+        };
+      }),
       effects: this.effectEvents.length > 0 ? [...this.effectEvents] : undefined,
       baseHostHp: this.physics!.getBaseHp('host'),
       baseClientHp: this.physics!.getBaseHp('client'),
@@ -502,6 +546,14 @@ export class NetworkedGame {
     
     // Clear effect events after sending
     this.effectEvents = [];
+    
+    // Clean up tracking for removed bodies
+    const currentBodyIds = new Set(snapshot.bodies.map(b => b.id));
+    this.sentBodies.forEach(id => {
+      if (!currentBodyIds.has(id)) {
+        this.sentBodies.delete(id);
+      }
+    });
     
     return snapshot;
   }
@@ -599,17 +651,7 @@ export class NetworkedGame {
       const renderTime = now - this.interpolationDelay;
       const bodies = this.getInterpolatedBodies(renderTime);
       
-      this.renderer.renderPhysics(bodies as Matter.Body[]);
-    }
-
-    if (this.role === 'host' && this.physics) {
-      const hostHp = this.physics.getBaseHp('host');
-      const clientHp = this.physics.getBaseHp('client');
-      this.renderer.renderBaseHealthbars(hostHp, clientHp);
-    } else {
-      const hostHp = this.latestSnapshot?.baseHostHp ?? 10;
-      const clientHp = this.latestSnapshot?.baseClientHp ?? 10;
-      this.renderer.renderBaseHealthbars(hostHp, clientHp);
+            this.renderer.renderPhysics(bodies as Matter.Body[]);
     }
 
     this.animationFrameId = requestAnimationFrame(this.gameLoop);
@@ -681,13 +723,20 @@ export class NetworkedGame {
       d = ((d + Math.PI) % (2 * Math.PI)) - Math.PI;
       const angle = a.angle + d * clampedAlpha;
 
-      // Interpolate vertices if provided; else approximate from pos/angle not needed for boxes
-      const vertices = (a.vertices && b.vertices && a.vertices.length === b.vertices.length)
-        ? a.vertices.map((va, i) => ({
-            x: lerp(va.x, b.vertices[i].x, clampedAlpha),
-            y: lerp(va.y, b.vertices[i].y, clampedAlpha),
-          }))
-        : (a.vertices || b.vertices || []);
+      // Get vertices: use from snapshot if available, otherwise transform cached local vertices
+      let vertices: Array<{ x: number; y: number }>;
+      if (a.vertices || b.vertices) {
+        vertices = a.vertices || b.vertices || [];
+      } else {
+        // Transform cached local vertices to world coordinates using current position/angle
+        const localVerts = this.verticesCache.get(id) || [];
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        vertices = localVerts.map(v => ({
+          x: pos.x + (v.x * cos - v.y * sin),
+          y: pos.y + (v.x * sin + v.y * cos)
+        }));
+      }
 
       const fakeBody: Partial<Matter.Body> & { id: number } = {
         id: hashId(id),
@@ -736,6 +785,20 @@ export class NetworkedGame {
 
   getMyEnergy(): number {
     return this._myResourcesCache?.energy ?? 0;
+  }
+
+  getBaseHealth(): { mine: number; enemy: number } {
+    if (this.role === 'host' && this.physics) {
+      return {
+        mine: this.physics.getBaseHp('host'),
+        enemy: this.physics.getBaseHp('client'),
+      };
+    } else {
+      return {
+        mine: this.latestSnapshot?.baseClientHp ?? 10,
+        enemy: this.latestSnapshot?.baseHostHp ?? 10,
+      };
+    }
   }
 }
 

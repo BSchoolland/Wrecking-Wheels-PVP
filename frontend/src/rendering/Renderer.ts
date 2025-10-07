@@ -5,7 +5,6 @@
 
 import type { GameState } from '@shared/types/GameState';
 import { WORLD_BOUNDS } from '@shared/constants/physics';
-import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 import { Camera } from '@/core/Camera';
 import { EffectManager } from './EffectManager';
 import type { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
@@ -18,6 +17,7 @@ export class Renderer {
   public effects: EffectManager;
   private onResizeHandler = () => this.resizeCanvas();
   private lastFrameTime = performance.now();
+  private playerRole: 'host' | 'client' | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -29,6 +29,10 @@ export class Renderer {
     this.effects = new EffectManager();
     this.resizeCanvas();
     window.addEventListener('resize', this.onResizeHandler);
+  }
+
+  setPlayerRole(role: 'host' | 'client'): void {
+    this.playerRole = role;
   }
 
   private resizeCanvas(): void {
@@ -164,8 +168,15 @@ export class Renderer {
       }
 
       // Get fill color from render options or use default
-      const fillStyle = renderOpts?.fillStyle ||
+      let fillStyle = renderOpts?.fillStyle ||
         (body.isStatic ? '#555555' : '#3498db');
+
+      // Override base colors based on player role (always show your base as blue, enemy as red)
+      if (body.label === 'base-host') {
+        fillStyle = this.playerRole === 'host' ? 'rgba(52,152,219,0.35)' : 'rgba(231,76,60,0.35)';
+      } else if (body.label === 'base-client') {
+        fillStyle = this.playerRole === 'client' ? 'rgba(52,152,219,0.35)' : 'rgba(231,76,60,0.35)';
+      }
 
       this.ctx.fillStyle = fillStyle;
       this.ctx.strokeStyle = '#000000';
@@ -238,52 +249,6 @@ export class Renderer {
     this.effects.render(this.ctx);
 
     this.resetCamera();
-  }
-
-  renderBaseHealthbars(hostHp: number, clientHp: number): void {
-    this.setupCamera();
-
-    const BASE_SIZE = BUILDER_CONSTANTS.GRID_SIZE * 3;
-    const BASE_HEIGHT = BASE_SIZE * 3;
-    const BASE_OFFSET_RATIO = 0.15;
-    const leftBaseX = WORLD_BOUNDS.WIDTH * BASE_OFFSET_RATIO;
-    const rightBaseX = WORLD_BOUNDS.WIDTH * (1 - BASE_OFFSET_RATIO);
-    const groundY = WORLD_BOUNDS.HEIGHT + 25;
-    const baseY = groundY - 60 - BASE_SIZE;
-    const topOfBaseY = baseY - BASE_HEIGHT / 2;
-    const healthbarY = topOfBaseY - 20;
-    const healthbarHeight = 10;
-    const healthbarWidth = BASE_SIZE;
-
-    // Host base (left)
-    if (hostHp > 0) {
-      this.drawHealthbar(leftBaseX, healthbarY, healthbarWidth, healthbarHeight, hostHp / 10);
-    }
-
-    // Client base (right)
-    if (clientHp > 0) {
-      this.drawHealthbar(rightBaseX, healthbarY, healthbarWidth, healthbarHeight, clientHp / 10);
-    }
-
-    this.resetCamera();
-  }
-
-  private drawHealthbar(x: number, y: number, width: number, height: number, percent: number): void {
-    if (percent <= 0) return; // Already checked outside, but safe
-
-    // Background
-    this.ctx.fillStyle = '#333333';
-    this.ctx.fillRect(x - width / 2, y, width, height);
-
-    // Health fill
-    const fillWidth = width * Math.max(0, Math.min(1, percent));
-    this.ctx.fillStyle = '#4CAF50';
-    this.ctx.fillRect(x - width / 2, y, fillWidth, height);
-
-    // Border
-    this.ctx.strokeStyle = '#000000';
-    this.ctx.lineWidth = 2;
-    this.ctx.strokeRect(x - width / 2, y, width, height);
   }
 
   /**

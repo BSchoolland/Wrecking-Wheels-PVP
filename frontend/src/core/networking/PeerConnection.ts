@@ -38,10 +38,10 @@ export class PeerConnection {
   async initialize(iceServers?: RTCIceServer[]): Promise<void> {
     this.connection = new RTCPeerConnection({
       iceServers: iceServers || [
-        { urls: 'stun:stun.l.google.com:19302' } // Free STUN server
+        { urls: 'stun:stun.l.google.com:19302' },
       ],
+      iceCandidatePoolSize: 10,
     });
-
     this.setupConnectionHandlers();
   }
 
@@ -58,15 +58,29 @@ export class PeerConnection {
     if (!this.connection) return;
 
     this.connection.onicecandidate = (event) => {
-      if (event.candidate && this.iceCandidateHandler) {
-        this.iceCandidateHandler(event.candidate);
+      if (event.candidate) {
+        console.log(`[${this.role}] ICE candidate: ${event.candidate.candidate}`);
+        if (this.iceCandidateHandler) {
+          this.iceCandidateHandler(event.candidate);
+        }
+      } else {
+        console.log(`[${this.role}] ICE gathering complete`);
       }
+    };
+
+    this.connection.oniceconnectionstatechange = () => {
+      const state = this.connection?.iceConnectionState;
+      console.log(`[${this.role}] ICE connection state: ${state}`);
+    };
+
+    this.connection.onicegatheringstatechange = () => {
+      const state = this.connection?.iceGatheringState;
+      console.log(`[${this.role}] ICE gathering state: ${state}`);
     };
 
     this.connection.onconnectionstatechange = () => {
       const state = this.connection?.connectionState;
-      if (import.meta.env.DEV) console.log('Connection state:', state);
-      
+      console.log(`[${this.role}] Connection state: ${state}`);
       if (state === 'disconnected' || state === 'failed' || state === 'closed') {
         this.onDisconnect();
       }
@@ -116,11 +130,11 @@ export class PeerConnection {
     if (!this.dataChannel) return;
 
     this.dataChannel.onopen = () => {
-      if (import.meta.env.DEV) console.log('Physics data channel opened');
+      console.log(`[${this.role}] Physics data channel opened`);
     };
 
     this.dataChannel.onclose = () => {
-      if (import.meta.env.DEV) console.log('Physics data channel closed');
+      console.log(`[${this.role}] Physics data channel closed`);
     };
 
     this.dataChannel.onmessage = (event) => {
@@ -137,12 +151,12 @@ export class PeerConnection {
     if (!this.reliableChannel) return;
 
     this.reliableChannel.onopen = () => {
-      if (import.meta.env.DEV) console.log('Reliable data channel opened');
+      console.log(`[${this.role}] Reliable data channel opened`);
       this.onConnect();
     };
 
     this.reliableChannel.onclose = () => {
-      if (import.meta.env.DEV) console.log('Reliable data channel closed');
+      console.log(`[${this.role}] Reliable data channel closed`);
     };
 
     this.reliableChannel.onmessage = (event) => {
