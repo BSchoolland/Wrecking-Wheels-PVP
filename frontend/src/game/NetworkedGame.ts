@@ -5,7 +5,7 @@
 import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
 import { Renderer } from '@/rendering/Renderer';
 import { NetworkManager, NetworkRole } from '@/core/networking/NetworkManager';
-import type { SpawnBoxCommand, GameCommand, ContraptionData, UIState, GameEvent } from '@shared/types/Commands';
+import type { GameCommand, ContraptionData, UIState, GameEvent, WheelInputCommand, PlayerInitCommand } from '@shared/types/Commands';
 import type { GameState } from '@shared/types/GameState';
 import type * as Matter from 'matter-js';
 import { Contraption, blockFromData } from '@/game/contraptions';
@@ -50,8 +50,6 @@ interface NetworkSnapshot {
   bodies: SerializableBody[];
   effects?: EffectEvent[];
   _receivedAt?: number;
-  baseHostHp?: number;
-  baseClientHp?: number;
 }
 
 interface NetworkedGameConfig {
@@ -61,7 +59,7 @@ interface NetworkedGameConfig {
   playerId: string;
   contraption: ContraptionSaveData;
   onContraptionSpawned?: () => void;
-  onGameOver?: (winner: 'host' | 'client') => void;
+  onGameOver?: (winner: 'host' | 'client' | 'tie') => void;
 }
 
 export class NetworkedGame {
@@ -93,11 +91,11 @@ export class NetworkedGame {
 
   // Client-side interpolation buffer
   private snapshotBuffer: NetworkSnapshot[] = [];
-  private interpolationDelay = 100; // ms to buffer behind for smoothness (adaptive)
+  private interpolationDelay = 300; // ms to buffer behind for smoothness (adaptive)
 
   private latestSnapshot: NetworkSnapshot | null = null;
   private gameEnded = false;
-  private onGameOver?: (winner: 'host' | 'client') => void;
+  private onGameOver?: (winner: 'host' | 'client' | 'tie') => void;
 
   // Packet rate tracking (client only)
   private packetsReceivedThisSecond = 0;
@@ -110,21 +108,8 @@ export class NetworkedGame {
   private readonly verticesResendInterval = 2000; // Resend vertices every 2000ms
   private readonly maxVerticesPerFrame = 5; // Limit vertices sent per frame to keep packets small
 
-  // Cooldowns per player
+  // Cooldowns per player (unused, but kept for minimal impact if referenced in effects)
   private buildCooldowns: Map<string, number> = new Map();
-
-  // Resources per player
-  private playerResources: Map<string, { energy: number }> = new Map();
-  private lastResourceUpdate = 0;
-  // Change the resource update interval and amount
-  private resourceUpdateInterval = 200; // 0.2 seconds
-  private resourceGainPerSecond = 1; // units per second for energy
-  private readonly maxEnergy = 20;
-  
-  // Track when both players are connected
-  private bothPlayersConnected = false;
-  
-  private _myResourcesCache: { energy: number } | null = null;
   public energy: number = 0;
 
   constructor(config: NetworkedGameConfig) {
@@ -135,10 +120,6 @@ export class NetworkedGame {
     this.onContraptionSpawned = config.onContraptionSpawned;
     this.onGameOver = config.onGameOver;
     
-    // Initialize resources for this player
-    this.playerResources.set(this.playerId, { energy: 0.0 });
-    this.lastResourceUpdate = Date.now();
-    this._myResourcesCache = { energy: 0.0 };
     this.energy = 0;
     
     // Initialize packet rate tracking
@@ -156,7 +137,6 @@ export class NetworkedGame {
     if (this.role === 'host') {
       this.physics = new PhysicsEngine();
       this.physics.setEffectManager(this.renderer.effects);
-      this.physics.setBaseOwner('host', this.playerId);
       this.setupEffectCapture();
       this.physics.start();
     }
@@ -178,21 +158,23 @@ export class NetworkedGame {
       onEvent: (event) => this.handleEvent(event),
       onConnected: () => { 
         if (import.meta.env.DEV) console.log('Peer connected!');
-        this.bothPlayersConnected = true;
-        if (import.meta.env.DEV) console.log('Both players connected - energy generation started');
-        // Client sends their playerId to host so host can initialize their resources
-        if (this.role === 'client') {
-          this.network.sendCommand({ type: 'player-init', playerId: this.playerId });
+        // Host spawns their contraption immediately; client informs host of selection
+        if (this.role === 'host') {
+          const x = WORLD_BOUNDS.WIDTH * 0.15;
+          const y = 200;
+          this.spawnContraption(x, y, this.playerId, this.savedContraption!);
+        } else {
+          const initCmd: PlayerInitCommand = { type: 'player-init', playerId: this.playerId, contraption: this.savedContraption! };
+          this.network.sendCommand(initCmd);
         }
       },
       onDisconnected: () => { 
         if (import.meta.env.DEV) console.log('Peer disconnected!');
-        this.bothPlayersConnected = false;
       },
     });
-
-    // Set up click handler
-    this.setupClickHandler();
+    
+    // Set up input handlers
+    this.setupInputHandlers();
   }
 
   /**
@@ -230,56 +212,7 @@ export class NetworkedGame {
   /**
    * Set up click handler to spawn contraptions
    */
-  private setupClickHandler(): void {
-    this.canvas.addEventListener('click', (e) => {
-      // Only spawn on left click (button 0 or undefined)
-      if (e.button !== undefined && e.button !== 0) return;
-
-      // Check if on cooldown
-      const cooldownEnd = this.buildCooldowns.get(this.playerId) || 0;
-      if (Date.now() < cooldownEnd) return;
-
-      // Check resources before spawning
-      if (!this.savedContraption) return;
-      const contraption = new Contraption('temp', 'temp');
-      this.savedContraption.blocks.forEach(blockData => {
-        const block = blockFromData(blockData as BlockData);
-        contraption.addBlock(block);
-      });
-      const cost = contraption.getCost();
-      
-      const currentResources = this.playerResources.get(this.playerId);
-      if (!currentResources || currentResources.energy < cost.energy) {
-        return;
-      }
-
-      // Convert screen coordinates to world coordinates using camera
-      const worldPos = this.renderer.camera.screenToWorld(e.clientX, e.clientY);
-      
-      // Snap to nearest ground level (upper or lower)
-      const UPPER_GROUND = -450; // Just above upper platform
-      const LOWER_GROUND = 450; // Just above lower platform
-      const snapY = Math.abs(worldPos.y - UPPER_GROUND) < Math.abs(worldPos.y - LOWER_GROUND) 
-        ? UPPER_GROUND 
-        : LOWER_GROUND;
-      
-      const command: SpawnBoxCommand = {
-        type: 'spawn-box',
-        playerId: this.playerId,
-        position: { x: worldPos.x, y: snapY },
-        contraption: this.savedContraption!,
-      };
-
-      // If host, execute command immediately
-      if (this.role === 'host') {
-        this.handleCommand(command);
-      } else {
-        // If client, send to host
-        this.network.sendCommand(command);
-      }
-      if (this.onContraptionSpawned) this.onContraptionSpawned();
-    });
-  }
+  private setupClickHandler(): void {}
 
   /**
    * Handle incoming commands (host only)
@@ -291,18 +224,15 @@ export class NetworkedGame {
 
     switch (command.type) {
       case 'player-init':
-        // Initialize resources for the connecting player
-        if (!this.playerResources.has(command.playerId)) {
-          console.log('Initialized resources for player:', command.playerId);
-          this.playerResources.set(command.playerId, { energy: 0.0 });
-          if (import.meta.env.DEV) console.log('Initialized resources for player:', command.playerId);
+        // Spawn client's contraption on right side
+        if (command.playerId !== this.playerId && command.contraption) {
+          const x = WORLD_BOUNDS.WIDTH * 0.85;
+          const y = 300;
+          this.spawnContraption(x, y, command.playerId, command.contraption);
         }
         break;
-      case 'spawn-box':
-        if (command.playerId !== this.playerId) {
-          this.physics.setBaseOwner('client', command.playerId);
-        }
-        this.spawnContraption(command.position.x, command.position.y, command.playerId, command.contraption);
+      case 'wheel-input':
+        this.physics.setWheelInput((command as WheelInputCommand).playerId, (command as WheelInputCommand).value);
         break;
     }
   }
@@ -313,89 +243,45 @@ export class NetworkedGame {
   private spawnContraption(x: number, y: number, playerId: string, contraptionData: ContraptionData): void {
     if (!this.physics) return;
 
-    // Initialize resources for other player if not yet initialized
-    if (!this.playerResources.has(playerId)) {
-      console.log('Reset player resources for:', playerId);
-      this.playerResources.set(playerId, { energy: 0.0 });
-    }
-
     // Determine direction: host faces right (1), client faces left (-1)
     const direction = playerId === this.playerId ? 1 : -1;
     
     // Determine team: each player gets their own team
     const team = playerId;
     
-    // Enforce 15% placement zone on each side
-    const mapWidth = WORLD_BOUNDS.WIDTH;
-    const zone = mapWidth * 0.15;
-    const clampedX = playerId === this.playerId
-      ? Math.max(0, Math.min(zone, x))
-      : Math.max(mapWidth - zone, Math.min(mapWidth, x));
+    const clampedX = x;
 
-    // Calculate build duration and set cooldown
-    const blockCount = contraptionData.blocks.length;
-    const durationMs = 500 + blockCount * 50;
-    const buildRadius = 40 + Math.sqrt(blockCount) * 10; // Scale with contraption size
-    this.buildCooldowns.set(playerId, Date.now() + durationMs);
-
-    // Calculate and deduct resources
-    const tempContraption = new Contraption('temp', 'temp');
+    // Create contraption instance
+    const contraption = new Contraption(
+      `${contraptionData.id}-${Date.now()}`,
+      contraptionData.name,
+      direction,
+      team
+    );
+    
+    // Load blocks
     contraptionData.blocks.forEach(blockData => {
       const block = blockFromData(blockData as BlockData);
-      tempContraption.addBlock(block);
+      contraption.addBlock(block);
     });
-    const cost = tempContraption.getCost();
     
-    const currentResources = this.playerResources.get(playerId);
-    if (currentResources) {
-      currentResources.energy -= cost.energy;
-      this.playerResources.set(playerId, currentResources);
-    }
-
-    // Trigger building dust effect (for host and sync to client)
-    this.renderer.effects.spawnBuildingDust(clampedX, y, durationMs, buildRadius);
-    this.effectEvents.push({
-      type: 'building',
-      x: clampedX,
-      y,
-      durationMs,
-      radius: buildRadius,
-      playerId,
+    // Register with physics engine
+    this.physics.registerContraption(contraption);
+    // Set bot flag so wheels auto-drive if no input
+    this.physics.setBot(playerId, !!contraptionData.isBot);
+    
+    // Build physics
+    const { bodies, constraints } = contraption.buildPhysics(clampedX, y);
+    
+    // Add to physics world
+    bodies.forEach(body => {
+      (body as ExtendedBody).ownerId = playerId;
+      (body as unknown as { driveDir?: number }).driveDir = direction;
+      this.physics!.addBody(body);
     });
-
-    // Delay spawning until animation finishes
-    setTimeout(() => {
-      if (!this.physics) return;
-
-      // Create contraption instance
-      const contraption = new Contraption(
-        `${contraptionData.id}-${Date.now()}`,
-        contraptionData.name,
-        direction,
-        team
-      );
-      
-      // Load blocks
-      contraptionData.blocks.forEach(blockData => {
-        const block = blockFromData(blockData as BlockData);
-        contraption.addBlock(block);
-      });
-      
-      // Register with physics engine
-      this.physics.registerContraption(contraption);
-      
-      // Build physics
-      const { bodies, constraints } = contraption.buildPhysics(clampedX, y);
-      
-      // Add to physics world
-      bodies.forEach(body => {
-        (body as ExtendedBody).ownerId = playerId;
-        this.physics!.addBody(body);
-      });
-      constraints.forEach(constraint => this.physics!.addConstraint(constraint));
-      
-      if (import.meta.env.DEV) console.log('Spawned contraption at', clampedX, y, 'for player', playerId, 'direction', direction);
-    }, durationMs);
+    constraints.forEach(constraint => this.physics!.addConstraint(constraint));
+    
+    if (import.meta.env.DEV) console.log('Spawned contraption at', clampedX, y, 'for player', playerId, 'direction', direction);
   }
 
   /**
@@ -413,7 +299,8 @@ export class NetworkedGame {
     
     // Cache vertices in LOCAL coordinates (relative to body center, unrotated)
     snapshot.bodies.forEach(body => {
-      if (body.vertices && body.vertices.length > 0 && !this.verticesCache.has(body.id)) {
+      const hasCache = this.verticesCache.has(body.id);
+      if (body.vertices && body.vertices.length > 0 && !hasCache) {
         // Convert world vertices to local coordinates
         const localVertices = body.vertices.map(v => {
           const dx = v.x - body.position.x;
@@ -427,6 +314,10 @@ export class NetworkedGame {
           };
         });
         this.verticesCache.set(body.id, localVertices);
+      }
+      // If we have cached vertices, ignore incoming vertices updates
+      if (this.verticesCache.has(body.id)) {
+        body.vertices = undefined;
       }
     });
     
@@ -484,23 +375,9 @@ export class NetworkedGame {
   /**
    * Handle UI update from host (client only) - UI Channel
    */
-  private handleUIUpdate(uiState: UIState): void {
+  private handleUIUpdate(_uiState: UIState): void {
     if (this.role === 'host') return;
-    
-    
-    // Update resources
-    Object.entries(uiState.resources).forEach(([playerId, resources]) => {
-      this.playerResources.set(playerId, resources);
-      if (playerId === this.playerId) {
-        this._myResourcesCache = resources;
-        this.energy = resources.energy;
-      } 
-    });
-
-    // Update cooldowns
-    Object.entries(uiState.cooldowns).forEach(([playerId, cooldownEnd]) => {
-      this.buildCooldowns.set(playerId, cooldownEnd);
-    });
+    // No UI resource updates in arena mode
   }
 
   /**
@@ -593,8 +470,6 @@ export class NetworkedGame {
         };
       }),
       effects: this.effectEvents.length > 0 ? [...this.effectEvents] : undefined,
-      baseHostHp: this.physics!.getBaseHp('host'),
-      baseClientHp: this.physics!.getBaseHp('client'),
     };
     
     // Clear effect events after sending
@@ -614,12 +489,7 @@ export class NetworkedGame {
   /**
    * Serialize UI state for network transmission (host only)
    */
-  private serializeUIState(): UIState {
-    return {
-      resources: Object.fromEntries(this.playerResources),
-      cooldowns: Object.fromEntries(this.buildCooldowns),
-    };
-  }
+  private serializeUIState(): UIState { return { resources: {}, cooldowns: Object.fromEntries(this.buildCooldowns) }; }
 
   /**
    * Start the game loop
@@ -638,40 +508,27 @@ export class NetworkedGame {
 
     const now = Date.now();
 
-    // Update resources periodically (host only, and only when both players are connected)
-    if (this.role === 'host' && this.bothPlayersConnected && now - this.lastResourceUpdate >= this.resourceUpdateInterval) {
-      const intervalSeconds = this.resourceUpdateInterval / 1000;
-      const increment = this.resourceGainPerSecond * intervalSeconds;
-      this.playerResources.forEach((resources, playerId) => {
-        resources.energy = Math.min(this.maxEnergy, resources.energy + increment);
-        this.playerResources.set(playerId, resources);
-        if (playerId === this.playerId) {
-          this._myResourcesCache = resources;
-          this.energy = resources.energy;
-        }
-      });
-      this.lastResourceUpdate = now;
-    }
+    // No periodic resource updates in arena mode
 
     // Detect game over on host
     if (this.role === 'host' && this.physics && !this.gameEnded && this.physics.isGameOver()) {
       this.gameEnded = true;
-      const hostHp = this.physics.getBaseHp('host');
-      const clientHp = this.physics.getBaseHp('client');
-      let winner: 'host' | 'client' | null = null;
-      if (clientHp <= 0) {
-        winner = 'host';
-      } else if (hostHp <= 0) {
-        winner = 'client';
+      const aliveOwners = (this.physics as unknown as { getAliveCoreOwners?: () => string[] }).getAliveCoreOwners?.();
+      const deathTimes = (this.physics as unknown as { getCoreDeathTimes?: () => Map<string, number> }).getCoreDeathTimes?.();
+      let winner: 'host' | 'client' | 'tie' | null = null;
+      if (deathTimes && deathTimes.size >= 2) {
+        const times = Array.from(deathTimes.values()).sort();
+        if (times[times.length - 1] - times[0] <= 2000) winner = 'tie';
       }
-      
-      // Send game-over event via events channel
-      if (winner) {
-        this.network.sendEvent({ type: 'game-over', winner });
-        if (this.onGameOver) {
-          this.onGameOver(winner);
-        }
+      if (!winner) {
+        const myAlive = aliveOwners?.includes(this.playerId);
+        const otherAlive = aliveOwners?.some(id => id !== this.playerId);
+        if (myAlive && !otherAlive) winner = 'host';
+        if (!myAlive && otherAlive) winner = 'client';
       }
+      if (!winner) winner = 'tie';
+      this.network.sendEvent({ type: 'game-over', winner } as GameEvent);
+      if (this.onGameOver) this.onGameOver(winner);
     }
 
     // Host: sync physics state to client periodically (20Hz)
@@ -714,14 +571,14 @@ export class NetworkedGame {
       // If packet rate is very low, reduce interpolation delay to show packets immediately
       // This prevents being stuck far in the past when only getting a few packets/sec
       if (this.recentPacketRate < 8) {
-        targetDelay = Math.min(targetDelay, 50); // Cap at 50ms when packet rate is low
+        targetDelay = Math.min(targetDelay, 150); // Cap at 150ms when packet rate is low
         if (import.meta.env.DEV && Math.random() < 0.1) {
           console.log(`Low packet rate (${this.recentPacketRate.toFixed(1)}/sec) - reducing interpolation delay to ${targetDelay}ms`);
         }
       }
       
-      // Smoothly adjust delay over time to prevent sudden jumps (2% per frame = ~50 frames to adjust)
-      this.interpolationDelay = this.interpolationDelay * 0.98 + targetDelay * 0.02;
+      // Smoothly adjust delay over time to prevent sudden jumps (1% per frame = ~100 frames to adjust)
+      this.interpolationDelay = this.interpolationDelay * 0.99 + targetDelay * 0.01;
       const renderTime = now - this.interpolationDelay;
       const bodies = this.getInterpolatedBodies(renderTime);
       
@@ -735,7 +592,7 @@ export class NetworkedGame {
    * Calculate adaptive interpolation delay based on network jitter
    */
   private calculateAdaptiveDelay(): number {
-    if (this.snapshotBuffer.length < 3) return 100; // fallback to default
+    if (this.snapshotBuffer.length < 3) return 300; // fallback to default
     
     // Measure intervals between last N snapshots
     const sampleSize = Math.min(10, this.snapshotBuffer.length);
@@ -756,7 +613,7 @@ export class NetworkedGame {
     const calculatedDelay = Math.max(avg + (2 * jitter), maxInterval) + 50; // +50ms safety margin
     
     // Clamp between 100ms (low latency) and 1000ms (high latency)
-    return Math.max(100, Math.min(1000, calculatedDelay));
+    return Math.max(300, Math.min(1000, calculatedDelay));
   }
 
   /**
@@ -903,6 +760,9 @@ export class NetworkedGame {
     const tNext = next._receivedAt!;
     const alpha = tNext > tPrev ? (targetTime - tPrev) / (tNext - tPrev) : 0;
     const clampedAlpha = Math.max(0, Math.min(1, alpha));
+    
+    // Apply smootherstep for smoother interpolation
+    const smoothAlpha = clampedAlpha * clampedAlpha * clampedAlpha * (clampedAlpha * (clampedAlpha * 6 - 15) + 10);
 
     // Index bodies by id for prev/next
     const prevMap: Map<string, SerializableBody> = new Map(prev.bodies.map((b) => [b.id, b]));
@@ -937,14 +797,14 @@ export class NetworkedGame {
       const lerp = (x: number, y: number, t: number) => x + (y - x) * t;
 
       const pos = {
-        x: lerp(a.position.x, b.position.x, clampedAlpha),
-        y: lerp(a.position.y, b.position.y, clampedAlpha),
+        x: lerp(a.position.x, b.position.x, smoothAlpha),
+        y: lerp(a.position.y, b.position.y, smoothAlpha),
       };
 
       // Shortest-arc angle lerp
       let d = b.angle - a.angle;
       d = ((d + Math.PI) % (2 * Math.PI)) - Math.PI;
-      const angle = a.angle + d * clampedAlpha;
+      const angle = a.angle + d * smoothAlpha;
 
       // Get vertices: use from snapshot if available, otherwise transform cached local vertices
       let vertices: Array<{ x: number; y: number }>;
@@ -1002,26 +862,38 @@ export class NetworkedGame {
     if (data) this.savedContraption = data;
   }
 
-  getPlayerResources(_playerId: string): { energy: number } | null {
-    return this._myResourcesCache || this.playerResources.get(this.playerId) || null;
-  }
-
-  getMyEnergy(): number {
-    return this._myResourcesCache?.energy ?? 0;
-  }
+  getPlayerResources(_playerId: string): { energy: number } | null { return null; }
+  getMyEnergy(): number { return 0; }
 
   getBaseHealth(): { mine: number; enemy: number } {
-    if (this.role === 'host' && this.physics) {
-      return {
-        mine: this.physics.getBaseHp('host'),
-        enemy: this.physics.getBaseHp('client'),
-      };
-    } else {
-      return {
-        mine: this.latestSnapshot?.baseClientHp ?? 10,
-        enemy: this.latestSnapshot?.baseHostHp ?? 10,
-      };
-    }
+    return { mine: 0, enemy: 0 };
+  }
+
+  private setupInputHandlers(): void {
+    let current = 0;
+    const send = (v: number) => {
+      if (v === current) return;
+      current = v;
+      if (this.role === 'host') {
+        // Apply locally on host
+        this.physics?.setWheelInput(this.playerId, v);
+      } else {
+        // Send to host (no mirroring; host uses driveDir)
+        const cmd: WheelInputCommand = { type: 'wheel-input', playerId: this.playerId, value: v };
+        this.network.sendCommand(cmd as unknown as GameCommand);
+      }
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.repeat) return;
+      if (e.key === 'a' || e.key === 'A') send(1);
+      if (e.key === 'd' || e.key === 'D') send(-1);
+    };
+    const onKeyUp = (e: KeyboardEvent) => {
+      if (e.key === 'a' || e.key === 'A') send(0);
+      if (e.key === 'd' || e.key === 'D') send(0);
+    };
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
   }
 }
 

@@ -58,17 +58,23 @@ export class WheelBlock extends BaseBlock {
         }
       }
     );
-    // Simple motor: accelerate forward until target angular velocity
+    // Apply wheel drive based on per-body input set by physics (currentWheelInput)
+    (wheel as unknown as { driveDir?: number }).driveDir = direction;
     (wheel as unknown as { onTick?: () => void }).onTick = () => {
-      const TARGET_W_AVG = 0.3 * direction; // rad/s (direction determines spin direction)
-      const MOTOR_TORQUE = 0.05 * direction; // torque matches direction
-      if ((direction > 0 && wheel.angularVelocity < TARGET_W_AVG) || 
-          (direction < 0 && wheel.angularVelocity > TARGET_W_AVG)) {
-        (wheel as unknown as { torque?: number }).torque = ((wheel as unknown as { torque?: number }).torque || 0) + MOTOR_TORQUE;
+      const anyWheel = wheel as unknown as { currentWheelInput?: number; angularVelocity?: number; torque?: number; driveDir?: number };
+      const input = anyWheel.currentWheelInput || 0;
+      if (!input) return;
+      const driveDir = (anyWheel.driveDir ?? direction);
+      const desired = 0.3 * input * driveDir * -1; // match prior speed
+      const w = anyWheel.angularVelocity || 0;
+      const needsAccel = (desired > 0 && w < desired) || (desired < 0 && w > desired);
+      if (needsAccel) {
+        const torque = 0.05 * (desired > 0 ? 1 : -1); // match prior torque
+        anyWheel.torque = (anyWheel.torque || 0) + torque;
       }
     };
     
-    // Connect wheel to attachment face with revolute constraint (free spinning)
+    // Connect wheel to attachment face with revolute constraint (free spi3nning)
     const axle = Matter.Constraint.create({
       bodyA: attachmentFace,
       bodyB: wheel,

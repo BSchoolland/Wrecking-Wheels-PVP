@@ -4,7 +4,7 @@
  */
 
 import Matter from 'matter-js';
-import { PHYSICS_CONSTANTS, WORLD_BOUNDS } from '@shared/constants/physics';
+import { PHYSICS_CONSTANTS } from '@shared/constants/physics';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 import type { PhysicsBodyState, Vector2D } from '@shared/types/GameState';
 import { createMapBoundaries } from '@/game/terrain/MapLoader';
@@ -27,8 +27,9 @@ export class PhysicsEngine {
   private effects: EffectManager | null = null;
   private activeCollisions: Map<string, number> = new Map(); // Track collision start times
   private gameOver = false;
-  private baseHost?: (Matter.Body & { baseHp?: number; ownerId?: string });
-  private baseClient?: (Matter.Body & { baseHp?: number; ownerId?: string });
+  private coreDeathTimes: Map<string, number> = new Map();
+  private wheelInput: Map<string, number> = new Map();
+  private botPlayers: Set<string> = new Set();
 
   constructor() {
     // Create Matter.js engine
@@ -47,63 +48,6 @@ export class PhysicsEngine {
   private createBoundaries(): void {
     const boundaries = createMapBoundaries();
     Matter.World.add(this.world, boundaries);
-
-    // Create team bases as non-collidable translucent sensors with HP
-    const BASE_SIZE = BUILDER_CONSTANTS.GRID_SIZE * 3;
-    const BASE_HEIGHT = 1250; // Tall enough to span both layers
-    const BASE_OFFSET_RATIO = 0.15; // 15% into the map
-    const leftBaseX = WORLD_BOUNDS.WIDTH * BASE_OFFSET_RATIO;
-    const rightBaseX = WORLD_BOUNDS.WIDTH * (1 - BASE_OFFSET_RATIO);
-    const baseY = 200; // Centered between upper (450) and lower (800) ground levels
-
-    this.baseHost = Matter.Bodies.rectangle(leftBaseX, baseY, BASE_SIZE, BASE_HEIGHT, {
-      isStatic: true,
-      isSensor: true,
-      label: 'base-host',
-      render: { fillStyle: 'rgba(52,152,219,0.35)' } as unknown as Matter.IBodyRenderOptions,
-    }) as Matter.Body & { baseHp?: number; ownerId?: string };
-    this.baseHost.baseHp = 10;
-
-    this.baseClient = Matter.Bodies.rectangle(rightBaseX, baseY, BASE_SIZE, BASE_HEIGHT, {
-      isStatic: true,
-      isSensor: true,
-      label: 'base-client',
-      render: { fillStyle: 'rgba(231,76,60,0.35)' } as unknown as Matter.IBodyRenderOptions,
-    }) as Matter.Body & { baseHp?: number; ownerId?: string };
-    this.baseClient.baseHp = 10;
-
-    const handleBaseCollision = (baseBody: Matter.Body & { baseHp?: number; ownerId?: string }, other: Matter.Body) => {
-      if (this.gameOver) return;
-      const otherBlock = (other as unknown as { block?: { type?: string; health?: number } }).block;
-      const otherOwner = (other as unknown as { ownerId?: string }).ownerId;
-      if (!otherBlock || otherBlock.type !== 'core') return;
-      // Ignore same owner if known
-      if (otherOwner && baseBody.ownerId && otherOwner === baseBody.ownerId) return;
-      // Kill the core
-      if (typeof otherBlock.health === 'number') {
-        otherBlock.health = 0;
-      }
-      // Decrement base HP once per contact event
-      if (typeof baseBody.baseHp === 'number' && baseBody.baseHp > 0) {
-        baseBody.baseHp -= 1;
-        if (baseBody.baseHp <= 0) {
-          this.gameOver = true;
-          const bodies = Matter.Composite.allBodies(this.world);
-          bodies.forEach(b => {
-            const bOwner = (b as unknown as { ownerId?: string }).ownerId;
-            const block = (b as unknown as { block?: { health?: number } }).block;
-            if (block && typeof block.health === 'number' && bOwner && baseBody.ownerId && bOwner === baseBody.ownerId) {
-              block.health = 0;
-            }
-          });
-        }
-      }
-    };
-
-    (this.baseHost as unknown as { onCollision?: (my: Matter.Body, other: Matter.Body) => void }).onCollision = (my, other) => handleBaseCollision(this.baseHost!, other);
-    (this.baseClient as unknown as { onCollision?: (my: Matter.Body, other: Matter.Body) => void }).onCollision = (my, other) => handleBaseCollision(this.baseClient!, other);
-
-    Matter.World.add(this.world, [this.baseHost, this.baseClient]);
   }
 
   private setupCollisionHandling(): void {
@@ -283,6 +227,14 @@ export class PhysicsEngine {
       for (const body of bodies) {
         const anyBody = body as unknown as { onTick?: () => void };
         if (typeof anyBody.onTick === 'function') anyBody.onTick();
+
+        // Apply simple torque to wheel bodies based on per-player input
+        const ownerId = (body as unknown as { ownerId?: string }).ownerId;
+        if (ownerId && body.label?.endsWith('-wheel')) {
+          let input = this.wheelInput.get(ownerId) || 0;
+          if (!this.wheelInput.has(ownerId) && this.botPlayers.has(ownerId)) input = 1; // bots drive forward by default
+          (body as unknown as { currentWheelInput?: number }).currentWheelInput = input;
+        }
       }
 
       // Flush queued forces (apply at body center for stability)
@@ -299,6 +251,30 @@ export class PhysicsEngine {
     // Clean up dead blocks after physics update
     Matter.Events.on(this.engine, 'afterUpdate', () => {
       this.cleanupDeadBlocks();
+
+      // Update core death timestamps and determine game over
+      if (!this.gameOver) {
+        const now = Date.now();
+        const bodies = Matter.Composite.allBodies(this.world);
+        const aliveOwners = new Set<string>();
+        bodies.forEach(b => {
+          const block = (b as unknown as { block?: { type?: string; health?: number } }).block;
+          const owner = (b as unknown as { ownerId?: string }).ownerId;
+          if (block && block.type === 'core' && owner) {
+            if ((block.health as number) > 0) aliveOwners.add(owner);
+            if ((block.health as number) <= 0 && !this.coreDeathTimes.has(owner)) this.coreDeathTimes.set(owner, now);
+          }
+        });
+        // If only one owner has alive core or both cores died close together, end game
+        if (this.coreDeathTimes.size > 0) {
+          const times = Array.from(this.coreDeathTimes.values()).sort();
+          if (times.length >= 2 && times[times.length - 1] - times[0] <= 2000) {
+            this.gameOver = true; // tie
+          } else if (aliveOwners.size <= 1) {
+            this.gameOver = true;
+          }
+        }
+      }
     });
     Matter.Runner.run(this.runner, this.engine);
   }
@@ -439,15 +415,27 @@ export class PhysicsEngine {
     return this.gameOver;
   }
 
-  setBaseOwner(side: 'host' | 'client', ownerId: string): void {
-    if (side === 'host' && this.baseHost) (this.baseHost as unknown as { ownerId?: string }).ownerId = ownerId;
-    if (side === 'client' && this.baseClient) (this.baseClient as unknown as { ownerId?: string }).ownerId = ownerId;
+  public setWheelInput(playerId: string, value: number): void {
+    const v = Math.max(-1, Math.min(1, value));
+    if (v === 0) this.wheelInput.delete(playerId); else this.wheelInput.set(playerId, v);
   }
 
-  public getBaseHp(side: 'host' | 'client'): number {
-    if (side === 'host') {
-      return this.baseHost?.baseHp ?? 10;
-    }
-    return this.baseClient?.baseHp ?? 10;
+  public getAliveCoreOwners(): string[] {
+    const alive = new Set<string>();
+    const bodies = Matter.Composite.allBodies(this.world);
+    bodies.forEach(b => {
+      const block = (b as unknown as { block?: { type?: string; health?: number } }).block;
+      const owner = (b as unknown as { ownerId?: string }).ownerId;
+      if (block && block.type === 'core' && block.health > 0 && owner) alive.add(owner);
+    });
+    return Array.from(alive);
+  }
+
+  public getCoreDeathTimes(): Map<string, number> { return new Map(this.coreDeathTimes); }
+
+  public getBaseHp(_side: 'host' | 'client'): number { return 0; }
+ 
+  public setBot(playerId: string, isBot: boolean): void {
+    if (isBot) this.botPlayers.add(playerId); else this.botPlayers.delete(playerId);
   }
 }

@@ -13,6 +13,7 @@ export interface ContraptionSaveData {
   blocks: BlockData[];
   direction?: number; // 1 = right (default), -1 = left (mirrored)
   team?: string; // Team identifier for friendly fire prevention
+  isBot?: boolean;
 }
 
 export class Contraption {
@@ -21,12 +22,14 @@ export class Contraption {
   blocks: Map<string, BaseBlock>; // key: "x,y" grid position
   direction: number; // 1 = right (default), -1 = left (mirrored)
   team: string; // Team identifier for friendly fire prevention
+  isBot: boolean;
   
-  constructor(id: string = '', name: string = 'Unnamed Contraption', direction: number = 1, team: string = 'default') {
+  constructor(id: string = '', name: string = 'Unnamed Contraption', direction: number = 1, team: string = 'default', isBot: boolean = false) {
     this.id = id || `contraption-${Date.now()}`;
     this.name = name;
     this.direction = direction;
     this.team = team;
+    this.isBot = isBot;
     this.blocks = new Map();
   }
   
@@ -207,6 +210,7 @@ export class Contraption {
       blocks: this.getAllBlocks().map(b => b.toData()),
       direction: this.direction,
       team: this.team,
+      isBot: this.isBot,
     };
   }
   
@@ -214,7 +218,7 @@ export class Contraption {
    * Load contraption from JSON
    */
   static load(data: ContraptionSaveData, blockFactory: (data: BlockData) => BaseBlock): Contraption {
-    const contraption = new Contraption(data.id, data.name, data.direction ?? 1, data.team ?? 'default');
+    const contraption = new Contraption(data.id, data.name, data.direction ?? 1, data.team ?? 'default', data.isBot ?? false);
     data.blocks.forEach(blockData => {
       const block = blockFactory(blockData);
       contraption.addBlock(block);

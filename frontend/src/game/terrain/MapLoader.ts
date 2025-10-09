@@ -13,27 +13,15 @@ export function createMapBoundaries(): Matter.Body[] {
   const bodies: Matter.Body[] = [];
   const BLOCK_SIZE = 50;
   
-  // Lower ground - create many small blocks instead of one large one
-  const lowerY = WORLD_BOUNDS.HEIGHT + 25;
+  // Single ground row at y = 450
+  const groundY = 450;
   for (let x = BLOCK_SIZE / 2; x < WORLD_BOUNDS.WIDTH; x += BLOCK_SIZE) {
     bodies.push(Matter.Bodies.rectangle(
       x,
-      lowerY,
+      groundY,
       BLOCK_SIZE,
       BLOCK_SIZE,
-      { isStatic: true, label: 'ground-lower' }
-    ));
-  }
-
-  // Upper ground - create many small blocks instead of one large one
-  const upperY = 0;
-  for (let x = BLOCK_SIZE / 2; x < WORLD_BOUNDS.WIDTH; x += BLOCK_SIZE) {
-    bodies.push(Matter.Bodies.rectangle(
-      x,
-      upperY,
-      BLOCK_SIZE,
-      BLOCK_SIZE,
-      { isStatic: true, label: 'ground-upper' }
+      { isStatic: true, label: 'ground' }
     ));
   }
 

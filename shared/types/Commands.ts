@@ -17,13 +17,15 @@ export interface ContraptionData {
   }>;
   direction?: number;
   team?: string;
+  isBot?: boolean;
 }
 
 export type GameCommand = 
   | DeployCommand
   | ReadyCommand
   | SpawnBoxCommand
-  | PlayerInitCommand;
+  | PlayerInitCommand
+  | WheelInputCommand;
 
 export interface DeployCommand {
   type: 'deploy';
@@ -48,6 +50,13 @@ export interface SpawnBoxCommand {
 export interface PlayerInitCommand {
   type: 'player-init';
   playerId: string;
+  contraption?: ContraptionData;
+}
+
+export interface WheelInputCommand {
+  type: 'wheel-input';
+  playerId: string;
+  value: number; // -1 = reverse (D), 0 = stop, +1 = forward (A)
 }
 
 /**

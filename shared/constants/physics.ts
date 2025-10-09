@@ -20,6 +20,6 @@ export const PHYSICS_CONSTANTS = {
 } as const;
 
 export const WORLD_BOUNDS = {
-  WIDTH: 6000,
+  WIDTH: 3000,
   HEIGHT: 800,
 } as const;

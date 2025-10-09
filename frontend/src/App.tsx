@@ -5,7 +5,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { NetworkedGame } from '@/game/NetworkedGame';
 import { ContraptionBuilder } from '@/ui/components/ContraptionBuilder';
-import { DeckBuilder } from '@/ui/components/DeckBuilder';
+// Decks removed in arena mode
 import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
 import { createBlock } from '@/game/contraptions';
 import type { BlockType } from '@/game/contraptions';
@@ -31,16 +31,12 @@ const initializeDefaults = async () => {
     defaultData.contraptions.forEach((c: ContraptionSaveData) => {
       localStorage.setItem(`contraption-${c.id}`, JSON.stringify(c));
     });
-
-    // Save deck-1 with the ids (up to 6)
-    const ids = defaultData.contraptions.slice(0, 6).map((c: ContraptionSaveData) => c.id);
-    localStorage.setItem('deck-1', JSON.stringify(ids));
   } catch (error) {
     console.error('Failed to load default deck:', error);
   }
 };
 
-type View = 'menu' | 'lobby' | 'game' | 'builder' | 'deck';
+type View = 'menu' | 'lobby' | 'game' | 'builder';
 type Role = 'host' | 'client';
 
 function App() {
@@ -49,13 +45,9 @@ function App() {
   const [lobbyId, setLobbyId] = useState('');
   const [playerId] = useState(`player-${Date.now()}`);
   const [selectedContraption, setSelectedContraption] = useState<ContraptionSaveData | null>(null);
-  const [selectedDeckSlot, setSelectedDeckSlot] = useState<1 | 2 | 3>(1);
-  const [deckQueue, setDeckQueue] = useState<ContraptionSaveData[]>([]); // remaining draw pile
-  const [hand, setHand] = useState<ContraptionSaveData[]>([]);
+  // Energy/health removed in arena mode
   const [gameOver, setGameOver] = useState<string | null>(null);
-  const [energy, setEnergy] = useState(0);
-  const [health, setHealth] = useState({ mine: 10, enemy: 10 });
-  
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<NetworkedGame | null>(null);
   const selectedRef = useRef<ContraptionSaveData | null>(null);
@@ -143,31 +135,7 @@ function App() {
     );
   };
 
-  const loadDeckIds = (slot: 1 | 2 | 3): string[] => {
-    try {
-      const raw = localStorage.getItem(`deck-${slot}`);
-      const ids = raw ? JSON.parse(raw) : [];
-      return Array.isArray(ids) ? ids : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const initDeckForGame = (slot: 1 | 2 | 3) => {
-    const ids = loadDeckIds(slot).slice(0, 6);
-    const contraptions: ContraptionSaveData[] = ids
-      .map(id => resolveContraptionById(id))
-      .filter(Boolean) as ContraptionSaveData[];
-    // If fewer than 6, allow starting but just use what exists
-    const initialQueue = contraptions.slice();
-    const initialHand = initialQueue.splice(0, 3);
-    setDeckQueue(initialQueue);
-    setHand(initialHand);
-    setSelectedContraption(initialHand[0] || null);
-  };
-
   const startGame = () => {
-    initDeckForGame(selectedDeckSlot);
     setView('game');
   };
 
@@ -199,30 +167,9 @@ function App() {
           lobbyId,
           playerId,
           contraption: selectedContraption,
-          onContraptionSpawned: () => {
-            setHand(prev => {
-              const selected = selectedRef.current;
-              if (!selected) return prev;
-              const idx = prev.findIndex(c => c.id === selected.id);
-              if (idx === -1) return prev;
-              const newHand = prev.slice();
-              const [played] = newHand.splice(idx, 1);
-              let drawn: ContraptionSaveData | undefined;
-              setDeckQueue(q => {
-                if (q.length === 0) return q;
-                drawn = q[0];
-                const rest = q.slice(1);
-                if (played) rest.push(played);
-                if (drawn) newHand.push(drawn);
-                setSelectedContraption(newHand[0] || null);
-                return rest;
-              });
-              return newHand;
-            });
-          },
-          onGameOver: (winner: 'host' | 'client') => {
-            const isWin = winner === role;
-            const message = isWin ? "You win!" : "You Lose :(";
+          onGameOver: (winner: 'host' | 'client' | 'tie') => {
+            const isWin = winner !== 'tie' && winner === role;
+            const message = winner === 'tie' ? "It's a tie!" : (isWin ? "You win!" : "You Lose :(");
             setGameOver(message);
             gameRef.current?.stop();
             setTimeout(() => {
@@ -234,20 +181,10 @@ function App() {
 
         gameRef.current.start();
       } else {
-        // Just update the selected contraption when switching cards
+        // Update selected contraption
         gameRef.current.setSelectedContraption(selectedContraption);
       }
-
-      // Poll energy and health for UI display
-      const uiInterval = setInterval(() => {
-        const currentEnergy = gameRef.current?.getMyEnergy() ?? 0;
-        const currentHealth = gameRef.current?.getBaseHealth() ?? { mine: 10, enemy: 10 };
-        setEnergy(currentEnergy);
-        setHealth(currentHealth);
-      }, 100);
-
       return () => {
-        clearInterval(uiInterval);
         if (view !== 'game' && gameRef.current) {
           gameRef.current.destroy();
           gameRef.current = null;
@@ -264,13 +201,9 @@ function App() {
         <div className="menu">
           <button onClick={createLobby}>Create Lobby (Host)</button>
           <button onClick={joinLobby}>Join Lobby (Client)</button>
-          <button onClick={() => setView('deck')}>Deck Builder</button>
+          {/* Decks removed */}
           <button onClick={() => setView('builder')}>Contraption Builder</button>
         </div>
-      )}
-
-      {view === 'deck' && (
-        <DeckBuilder onBack={() => setView('menu')} />
       )}
 
       {view === 'builder' && (
@@ -288,42 +221,34 @@ function App() {
           </p>
           
           <div className="contraption-selection">
-            <h3>Select Deck Slot</h3>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-              <button onClick={() => setSelectedDeckSlot(1)} disabled={selectedDeckSlot === 1}>Deck 1</button>
-              <button onClick={() => setSelectedDeckSlot(2)} disabled={selectedDeckSlot === 2}>Deck 2</button>
-              <button onClick={() => setSelectedDeckSlot(3)} disabled={selectedDeckSlot === 3}>Deck 3</button>
-            </div>
-            <div>
-              <h4>Preview</h4>
-              <div className="contraption-list">
-                {(() => {
-                  try {
-                    const raw = localStorage.getItem(`deck-${selectedDeckSlot}`) || '[]';
-                    const ids = JSON.parse(raw);
-                    const items = Array.isArray(ids) ? ids : [];
-                    if (items.length === 0) return <p className="no-contraptions">Empty deck. Build one in Deck Builder.</p>;
-                    return items.slice(0, 6).map((id: string) => {
-                      const dataRaw = localStorage.getItem(`contraption-${id}`);
-                      if (!dataRaw) return null;
-                      try {
-                        const data = JSON.parse(dataRaw);
-                        return (
-                          <div key={id} className="contraption-item">
-                            <div className="contraption-name">{data.name}</div>
-                            <div className="contraption-info">{data.blocks?.length || 0} blocks</div>
-                          </div>
-                        );
-                      } catch { return null; }
-                    });
-                  } catch { return null; }
-                })()}
-              </div>
+            <h3>Select Your Contraption</h3>
+            <div className="contraption-list">
+              {(() => {
+                const items: ContraptionSaveData[] = [];
+                for (let i = 0; i < localStorage.length; i++) {
+                  const key = localStorage.key(i);
+                  if (!key || !key.startsWith('contraption-')) continue;
+                  const raw = localStorage.getItem(key);
+                  if (!raw) continue;
+                  try { items.push(JSON.parse(raw)); } catch {}
+                }
+                if (items.length === 0) return <p className="no-contraptions">No saved contraptions. Create one in the builder.</p>;
+                return items.map((data) => (
+                  <div 
+                    key={data.id} 
+                    className={`contraption-item ${selectedContraption?.id === data.id ? 'selected' : ''}`}
+                    onClick={() => setSelectedContraption(data)}
+                  >
+                    <div className="contraption-name">{data.name}</div>
+                    <div className="contraption-info">{data.blocks?.length || 0} blocks</div>
+                  </div>
+                ));
+              })()}
             </div>
           </div>
           
           <div className="lobby-actions">
-            <button onClick={startGame}>Start Game</button>
+            <button onClick={startGame} disabled={!selectedContraption}>Start Game</button>
             <button onClick={() => { setView('menu'); setLobbyId(''); }}>
               Back to Menu
             </button>
@@ -360,84 +285,14 @@ function App() {
             <div className="hud-info">
               <span>Lobby: {lobbyId}</span>
               <span>Role: {role}</span>
-              <span>Left Click: Spawn contraption</span>
+              <span>Controls: A drive forward, D reverse</span>
               <span>Right/Middle Click + Drag: Pan camera</span>
               <span>Mouse Wheel: Zoom in/out</span>
             </div>
-            <div className="health-display">
-              <div className="health-bar-container">
-                <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#3498db' }}>You</span>
-                <div className="health-bar-wrapper">
-                  <div className="health-bar-bg">
-                    <div 
-                      className="health-bar-fill" 
-                      style={{ 
-                        width: `${(health.mine / 10) * 100}%`,
-                        backgroundColor: '#3498db'
-                      }}
-                    />
-                  </div>
-                  <span className="health-text">{health.mine}/10</span>
-                </div>
-              </div>
-              <div className="health-bar-container">
-                <span style={{ fontSize: '0.9rem', fontWeight: 'bold', color: '#e74c3c' }}>Enemy</span>
-                <div className="health-bar-wrapper">
-                  <div className="health-bar-bg">
-                    <div 
-                      className="health-bar-fill" 
-                      style={{ 
-                        width: `${(health.enemy / 10) * 100}%`,
-                        backgroundColor: '#e74c3c'
-                      }}
-                    />
-                  </div>
-                  <span className="health-text">{health.enemy}/10</span>
-                </div>
-              </div>
-            </div>
-            <div className="energy-display">
-              <span style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>⚡ {energy.toFixed(1)}/20</span>
-            </div>
           </div>
-          <div className="contraption-cards-container">
-            <div className="contraption-cards">
-              {hand.map((c) => {
-                const cost = calculateCost(c);
-                const placementTime = calculatePlacementTime(c);
-                const isSelected = selectedContraption?.id === c.id;
-                const canAfford = energy >= cost.energy;
-                
-                return (
-                  <div 
-                    key={c.id} 
-                    className={`contraption-card ${isSelected ? 'selected' : ''} ${!canAfford ? 'unaffordable' : ''}`}
-                    onClick={() => {
-                      setSelectedContraption(c);
-                      gameRef.current?.setSelectedContraption(c);
-                    }}
-                  >
-                    <div className="card-name">{c?.name || 'Empty'}</div>
-                    <div className="card-preview">
-                      {renderContraptionPreview(c)}
-                    </div>
-                    <div className="card-costs">
-                      <span className={`cost-item ${energy < cost.energy ? 'insufficient' : ''}`}>
-                        ⚡ {cost.energy}
-                      </span>
-                      <span className="cost-item">
-                        ⏱️ {placementTime.toFixed(1)}s
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="deck-counter">Deck: {deckQueue.length}</div>
-            <button className="back-button" onClick={stopGame}>
-              Leave Game
-            </button>
-          </div>
+          <button className="back-button" onClick={stopGame} style={{ position: 'absolute', bottom: 12, right: 12 }}>
+            Leave Game
+          </button>
         </div>
       )}
     </div>

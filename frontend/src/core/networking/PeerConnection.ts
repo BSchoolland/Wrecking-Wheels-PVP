@@ -140,9 +140,6 @@ export class PeerConnection {
     this.dataChannel.onmessage = (event) => {
       try {
         const message = JSON.parse(event.data) as NetworkMessage;
-        if (message.type === 'state') {
-          console.log(`[${this.role}] Received state packet at ${Date.now()}`);
-        }
         this.onMessage(message);
       } catch (error) {
         console.error('Failed to parse message:', error);
