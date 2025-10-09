@@ -138,6 +138,8 @@ export class NetworkedGame {
     if (this.role === 'client') {
       this.renderer.camera.mirrorX = true;
     }
+    // Disable manual camera controls during battle; renderer will follow player
+    this.renderer.camera.setControlsEnabled(false);
     
     // Initialize physics (host only)
     if (this.role === 'host') {

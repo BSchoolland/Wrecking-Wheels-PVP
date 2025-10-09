@@ -10,6 +10,14 @@ import { EffectManager } from './EffectManager';
 import type { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
 import type * as Matter from 'matter-js';
 
+// Camera tuning constants (no magic numbers)
+const CAMERA_SMOOTHING = 0.02; // 0-1, higher is snappier
+const CAMERA_DEADZONE_PX = 30; // pixels from screen center before camera moves
+const ZOOM_SMOOTHING = 0.08; // 0-1, higher is snappier
+const ZOOM_OUT_SPEED_FULL = 450; // world units/sec at which we fully zoom out
+const ZOOM_OUT_MIN_FACTOR = 0.7; // min zoom = baseZoom * factor (zoomed out)
+const ZOOM_IN_MAX_FACTOR = 1.05; // max zoom = baseZoom * factor (slightly closer)
+
 export class Renderer {
   private canvas: HTMLCanvasElement;
   private ctx: CanvasRenderingContext2D;
@@ -19,6 +27,11 @@ export class Renderer {
   private lastFrameTime = performance.now();
   private playerRole: 'host' | 'client' | null = null;
   private myPlayerId: string | null = null;
+  private battleCameraInitialized = false;
+  private baseZoom: number | null = null;
+  private lastFollowX: number | null = null;
+  private lastFollowY: number | null = null;
+  private lastFollowT: number | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -147,6 +160,54 @@ export class Renderer {
     }
   }
 
+  private updateBattleCamera(bodies: Matter.Body[], now: number, deltaTime: number): void {
+    if (!this.myPlayerId) return;
+    let sumX = 0;
+    let sumY = 0;
+    let count = 0;
+    for (const body of bodies) {
+      const ownerId = (body as unknown as { ownerId?: string }).ownerId;
+      if (ownerId === this.myPlayerId && !(body as unknown as { isStatic?: boolean }).isStatic) {
+        sumX += (body as unknown as { position: { x: number } }).position.x;
+        sumY += (body as unknown as { position: { y: number } }).position.y;
+        count++;
+      }
+    }
+    if (count === 0) return;
+
+    const targetX = sumX / count;
+    const targetY = sumY / count;
+
+    // Deadzone calculation in screen space
+    const playerScreen = this.camera.worldToScreen(targetX, targetY);
+    const centerX = this.canvas.width / 2;
+    const centerY = this.canvas.height / 2;
+    let desiredCamX = this.camera.x;
+    let desiredCamY = this.camera.y;
+    const dx = playerScreen.x - centerX;
+    const dy = playerScreen.y - centerY;
+    const deadX = CAMERA_DEADZONE_PX;
+    const deadY = CAMERA_DEADZONE_PX * 0.6;
+    if (Math.abs(dx) > deadX) {
+      const excessX = Math.abs(dx) - deadX;
+      const dirX = this.camera.mirrorX ? -Math.sign(dx) : Math.sign(dx);
+      const worldShiftX = (excessX / this.camera.zoom) * dirX;
+      desiredCamX += worldShiftX;
+    }
+    if (Math.abs(dy) > deadY) {
+      const excessY = Math.abs(dy) - deadY;
+      const worldShiftY = (excessY / this.camera.zoom) * Math.sign(dy);
+      desiredCamY += worldShiftY;
+    }
+
+    // Smoothly move camera toward desired position
+    this.camera.x += (desiredCamX - this.camera.x) * CAMERA_SMOOTHING;
+    this.camera.y += (desiredCamY - this.camera.y) * CAMERA_SMOOTHING;
+    this.lastFollowX = targetX;
+    this.lastFollowY = targetY;
+    this.lastFollowT = now;
+  }
+
   /**
    * Render Matter.js bodies directly (for demo/testing)
    */
@@ -156,6 +217,19 @@ export class Renderer {
     const deltaTime = now - this.lastFrameTime;
     this.lastFrameTime = now;
     this.effects.update(deltaTime);
+
+    // Disable manual camera controls during battle (once)
+    if (!this.battleCameraInitialized) {
+      this.camera.setControlsEnabled(false);
+      this.battleCameraInitialized = true;
+      if (this.baseZoom === null) {
+        this.baseZoom = this.camera.zoom * 3; // start 3x more zoomed in for battle
+        this.camera.zoom = this.baseZoom; // apply immediately
+      }
+    }
+
+    // Focus camera on my contraption (smooth follow with deadzone and auto-zoom)
+    this.updateBattleCamera(bodies, now, deltaTime);
 
     this.clear();
     this.setupCamera();
@@ -273,7 +347,7 @@ export class Renderer {
    */
   destroy(): void {
     window.removeEventListener('resize', this.onResizeHandler);
-    this.camera.destroy();
     this.effects.clear();
+    this.camera.destroy();
   }
 }
