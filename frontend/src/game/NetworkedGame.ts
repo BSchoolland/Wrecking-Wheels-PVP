@@ -5,7 +5,7 @@
 import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
 import { Renderer } from '@/rendering/Renderer';
 import { NetworkManager, NetworkRole } from '@/core/networking/NetworkManager';
-import type { SpawnBoxCommand, GameCommand, ContraptionData, UIState, GameEvent, WheelInputCommand } from '@shared/types/Commands';
+import type { SpawnBoxCommand, GameCommand, ContraptionData, UIState, GameEvent, WheelInputCommand, PlayerInitCommand } from '@shared/types/Commands';
 import type { GameState } from '@shared/types/GameState';
 import type * as Matter from 'matter-js';
 import { Contraption, blockFromData } from '@/game/contraptions';
@@ -168,9 +168,16 @@ export class NetworkedGame {
         if (import.meta.env.DEV) console.log('Peer connected!');
         this.bothPlayersConnected = true;
         if (import.meta.env.DEV) console.log('Both players connected - energy generation started');
-        // Client sends their playerId to host so host can initialize their resources
-        if (this.role === 'client') {
-          this.network.sendCommand({ type: 'player-init', playerId: this.playerId });
+        // Host spawns own contraption immediately; client informs host of theirs
+        if (this.role === 'host') {
+          if (this.savedContraption) {
+            const x = WORLD_BOUNDS.WIDTH * 0.15;
+            const y = 200;
+            this.spawnContraption(x, y, this.playerId, this.savedContraption);
+          }
+        } else {
+          const initCmd: PlayerInitCommand = { type: 'player-init', playerId: this.playerId, contraption: this.savedContraption || undefined };
+          this.network.sendCommand(initCmd as unknown as GameCommand);
         }
       },
       onDisconnected: () => { 
@@ -301,11 +308,14 @@ export class NetworkedGame {
 
     switch (command.type) {
       case 'player-init':
-        // Initialize resources for the connecting player
+        // Initialize resources and spawn client's contraption if provided
         if (!this.playerResources.has(command.playerId)) {
-          console.log('Initialized resources for player:', command.playerId);
           this.playerResources.set(command.playerId, { energy: 0.0 });
-          if (import.meta.env.DEV) console.log('Initialized resources for player:', command.playerId);
+        }
+        if (command.playerId !== this.playerId && command.contraption) {
+          const x = WORLD_BOUNDS.WIDTH * 0.85;
+          const y = 300;
+          this.spawnContraption(x, y, command.playerId, command.contraption);
         }
         break;
       case 'wheel-input':
