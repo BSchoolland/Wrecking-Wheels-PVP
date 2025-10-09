@@ -33,6 +33,9 @@ interface SerializableBody {
   };
   ownerId?: string;
   label?: string;
+  // Optional kinematics for better interpolation
+  // velocity?: { x: number; y: number };
+  // angularVelocity?: number;
 }
 
 interface EffectEvent {
@@ -103,10 +106,14 @@ export class NetworkedGame {
   // Client-side interpolation buffer
   private snapshotBuffer: NetworkSnapshot[] = [];
   private interpolationDelay = 100; // ms to buffer behind for smoothness
-
+  private interpolationEnabled = true; // toggle for interpolation
+  
   private latestSnapshot: NetworkSnapshot | null = null;
   private gameEnded = false;
   private onGameOver?: (winner: 'host' | 'client') => void;
+
+  // Track estimated host time offset (hostNow ≈ clientNow + hostTimeOffsetMs)
+  private hostTimeOffsetMs = 0;
 
   // Cooldowns per player (disabled)
   private buildCooldowns: Map<string, number> = new Map();
@@ -365,6 +372,15 @@ export class NetworkedGame {
     if (this.role === 'host') return;
     // Treat incoming state as a network snapshot for interpolation
     const snapshot = { ...(state as unknown as NetworkSnapshot), _receivedAt: Date.now() } as NetworkSnapshot;
+
+    // Update host time offset estimate (EMA) so client can convert to host time
+    const recvNow = snapshot._receivedAt || Date.now();
+    const oneWay = this.network.getEstimatedOneWayMs ? (this.network.getEstimatedOneWayMs() || 0) : 0;
+    const estimatedHostNowAtReceive = snapshot.timestamp + oneWay;
+    const offsetEstimate = estimatedHostNowAtReceive - recvNow;
+    this.hostTimeOffsetMs = this.hostTimeOffsetMs === 0
+      ? offsetEstimate
+      : this.hostTimeOffsetMs + (offsetEstimate - this.hostTimeOffsetMs) * 0.1;
     
     // Cache vertices in LOCAL coordinates (relative to body center, unrotated)
     snapshot.bodies.forEach(body => {
@@ -418,11 +434,12 @@ export class NetworkedGame {
       });
     }
 
-    // Keep only the last ~1s of snapshots (by receive time when available), but never drain to zero
-    const cutoff = Date.now() - 1000;
+    // Keep only the last ~1s of snapshots + interpolation delay (by host time), but never drain to zero
+    const hostNow = Date.now() + this.hostTimeOffsetMs;
+    const cutoff = hostNow - 1000 - this.interpolationDelay;
     while (
       this.snapshotBuffer.length > 1 &&
-      ((this.snapshotBuffer[0]._receivedAt ?? this.snapshotBuffer[0].timestamp) as number) < cutoff
+      (this.snapshotBuffer[0].timestamp as number) < cutoff
     ) {
       this.snapshotBuffer.shift();
     }
@@ -501,6 +518,8 @@ export class NetworkedGame {
           },
           ownerId: isNew ? ((body as ExtendedBody).ownerId || undefined) : undefined,
           label: isNew ? (body.label || undefined) : undefined,
+          velocity: { x: (body as unknown as { velocity?: { x: number; y: number } }).velocity?.x || 0, y: (body as unknown as { velocity?: { x: number; y: number } }).velocity?.y || 0 },
+          angularVelocity: (body as unknown as { angularVelocity?: number }).angularVelocity || 0,
         };
       }),
       effects: this.effectEvents.length > 0 ? [...this.effectEvents] : undefined,
@@ -605,11 +624,11 @@ export class NetworkedGame {
       // Host renders from physics engine
       this.renderer.renderPhysics(this.physics.getAllBodies());
     } else {
-      // Client: render interpolated snapshot
-      const renderTime = now - this.interpolationDelay;
+      // Client: render interpolated snapshot or latest snapshot
+      const hostNow = now + this.hostTimeOffsetMs;
+      const renderTime = hostNow - this.interpolationDelay;
       const bodies = this.getInterpolatedBodies(renderTime);
-      
-            this.renderer.renderPhysics(bodies as Matter.Body[]);
+      this.renderer.renderPhysics(bodies as Matter.Body[]);
     }
 
     this.animationFrameId = requestAnimationFrame(this.gameLoop);
@@ -622,95 +641,105 @@ export class NetworkedGame {
     if (this.snapshotBuffer.length === 0) {
       return Array.from(this.bodies.values());
     }
-
-    // Buffer is kept ordered on push; no per-frame sort
-
-    // Find snapshots bracketing targetTime
+  
+    // Step 1: Find the two snapshots bracketing targetTime
     let prev = this.snapshotBuffer[0];
     let next = this.snapshotBuffer[this.snapshotBuffer.length - 1];
-
+  
     for (let i = 0; i < this.snapshotBuffer.length - 1; i++) {
       const a = this.snapshotBuffer[i];
       const b = this.snapshotBuffer[i + 1];
-      const ta = (a._receivedAt ?? a.timestamp);
-      const tb = (b._receivedAt ?? b.timestamp);
-      if (ta <= targetTime && targetTime <= tb) {
+      if (a.timestamp <= targetTime && targetTime <= b.timestamp) {
         prev = a;
         next = b;
         break;
       }
     }
-
-    const tPrev = (prev._receivedAt ?? prev.timestamp);
-    const tNext = (next._receivedAt ?? next.timestamp);
-    const alpha = tNext > tPrev ? (targetTime - tPrev) / (tNext - tPrev) : 0;
-    const clampedAlpha = Math.max(0, Math.min(1, alpha));
-
-    // Index bodies by id for prev/next
-    const prevMap: Map<string, SerializableBody> = new Map(prev.bodies.map((b) => [b.id, b]));
-    const nextMap: Map<string, SerializableBody> = new Map(next.bodies.map((b) => [b.id, b]));
-    const ids = new Set<string>();
-    prevMap.forEach((_, id) => ids.add(id));
-    nextMap.forEach((_, id) => ids.add(id));
-
-    const result: Matter.Body[] = [];
-    // Simple string -> number hash for deterministic id used by crack rendering
+  
+    // Step 2: Calculate interpolation fraction
+    const timeBetween = next.timestamp - prev.timestamp;
+    const timeElapsed = targetTime - prev.timestamp;
+    const fraction = timeBetween > 0 ? timeElapsed / timeBetween : 0;
+    const clampedFraction = Math.max(0, Math.min(1, fraction));
+  
+    // Step 3: Create maps for easy lookup
+    const prevMap = new Map(prev.bodies.map(b => [b.id, b]));
+    const nextMap = new Map(next.bodies.map(b => [b.id, b]));
+    
+    // Get all body IDs from both snapshots
+    const allIds = new Set([...prevMap.keys(), ...nextMap.keys()]);
+  
+    // Helper function from your original code
     const hashId = (s: string): number => {
       let h = 0;
       for (let i = 0; i < s.length; i++) {
         h = ((h << 5) - h) + s.charCodeAt(i);
         h |= 0;
       }
-      return Math.abs(h) + 1; // ensure > 0
+      return Math.abs(h) + 1;
     };
-
-    ids.forEach((id) => {
-      const a = prevMap.get(id) || nextMap.get(id);
-      const b = nextMap.get(id) || prevMap.get(id);
-      if (!a || !b) return;
-
-      const lerp = (x: number, y: number, t: number) => x + (y - x) * t;
-
-      const pos = {
-        x: lerp(a.position.x, b.position.x, clampedAlpha),
-        y: lerp(a.position.y, b.position.y, clampedAlpha),
-      };
-
-      // Shortest-arc angle lerp
-      let d = b.angle - a.angle;
-      d = ((d + Math.PI) % (2 * Math.PI)) - Math.PI;
-      const angle = a.angle + d * clampedAlpha;
-
-      // Get vertices: use from snapshot if available, otherwise transform cached local vertices
-      let vertices: Array<{ x: number; y: number }>;
-      if (a.vertices || b.vertices) {
-        vertices = a.vertices || b.vertices || [];
-      } else {
-        // Transform cached local vertices to world coordinates using current position/angle
-        const localVerts = this.verticesCache.get(id) || [];
-        const cos = Math.cos(angle);
-        const sin = Math.sin(angle);
-        vertices = localVerts.map(v => ({
-          x: pos.x + (v.x * cos - v.y * sin),
-          y: pos.y + (v.x * sin + v.y * cos)
-        }));
+  
+    const result: Matter.Body[] = [];
+  
+    allIds.forEach(id => {
+      const prevBody = prevMap.get(id);
+      const nextBody = nextMap.get(id);
+  
+      // Handle bodies that exist in both snapshots
+      if (prevBody && nextBody) {
+        // Interpolate position
+        const interpolatedPosition = {
+          x: prevBody.position.x + (nextBody.position.x - prevBody.position.x) * clampedFraction,
+          y: prevBody.position.y + (nextBody.position.y - prevBody.position.y) * clampedFraction
+        };
+  
+        // Interpolate angle (simple linear for now - we can improve this later)
+        const interpolatedAngle = prevBody.angle + (nextBody.angle - prevBody.angle) * clampedFraction;
+  
+        // Get vertices from snapshots if available, otherwise from cache
+        let vertices: Array<{ x: number; y: number }>;
+        if (prevBody.vertices || nextBody.vertices) {
+          vertices = prevBody.vertices || nextBody.vertices || [];
+        } else {
+          const localVerts = this.verticesCache.get(id) || [];
+          const cos = Math.cos(interpolatedAngle);
+          const sin = Math.sin(interpolatedAngle);
+          vertices = localVerts.map(v => ({
+            x: interpolatedPosition.x + (v.x * cos - v.y * sin),
+            y: interpolatedPosition.y + (v.x * sin + v.y * cos)
+          }));
+        }
+  
+        // Create the fake body
+        const fakeBody: Partial<Matter.Body> & { id: number } = {
+          id: hashId(id),
+          position: interpolatedPosition,
+          angle: interpolatedAngle,
+          vertices,
+          circleRadius: prevBody.circleRadius ?? nextBody.circleRadius,
+          isStatic: prevBody.isStatic ?? nextBody.isStatic,
+          render: prevBody.render ?? nextBody.render ?? { fillStyle: '#3498db' },
+        };
+        
+        // Add cached metadata
+        (fakeBody as any).ownerId = this.ownerCache.get(id);
+        (fakeBody as any).label = this.labelCache.get(id);
+        
+        result.push(fakeBody as Matter.Body);
       }
-
-      const fakeBody: Partial<Matter.Body> & { id: number } = {
-        id: hashId(id),
-        position: pos,
-        angle,
-        vertices,
-        circleRadius: a.circleRadius ?? b.circleRadius,
-        isStatic: a.isStatic ?? b.isStatic,
-        render: a.render ?? b.render ?? { fillStyle: '#3498db' },
-      };
-      // Attach metadata for rendering (wheel glow): owner and label if known
-      (fakeBody as unknown as { ownerId?: string }).ownerId = this.ownerCache.get(id);
-      (fakeBody as unknown as { label?: string }).label = this.labelCache.get(id);
-      result.push(fakeBody as Matter.Body);
+      
+      // TODO: Handle bodies only in prev (being destroyed)
+      else if (prevBody && !nextBody) {
+        // Body is being destroyed - for now, just show it at prev position
+        // You mentioned wanting to trigger destruction animation here
+      }
+      
+      // TODO: Handle bodies only in next (newly created)
+      else if (!prevBody && nextBody) {
+        // Body just appeared - for now, just show it at next position
+      }
     });
-
+  
     return result;
   }
 
@@ -755,6 +784,10 @@ export class NetworkedGame {
         enemy: this.latestSnapshot?.baseHostHp ?? 10,
       };
     }
+  }
+
+  setInterpolationEnabled(enabled: boolean): void {
+    this.interpolationEnabled = enabled;
   }
 }
 
