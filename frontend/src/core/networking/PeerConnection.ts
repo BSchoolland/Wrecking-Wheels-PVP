@@ -109,7 +109,7 @@ export class PeerConnection {
 
     this.dataChannel = this.connection.createDataChannel('game-state', {
       ordered: false, // Allow out-of-order delivery for lower latency
-      // Reliable delivery (no maxRetransmits) to prevent packet loss at high latency
+      maxRetransmits: 0, // Don't retransmit old state
     });
 
     this.setupDataChannelHandlers();
