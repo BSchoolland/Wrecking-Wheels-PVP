@@ -78,7 +78,7 @@ export type GameEvent =
  * Network message wrapper
  */
 export interface NetworkMessage<T = unknown> {
-  type: 'command' | 'state' | 'ui-update' | 'event';
+  type: 'command' | 'state' | 'ui-update' | 'event' | 'ping' | 'pong';
   payload: T;
   sequence?: number; // for message ordering
 }

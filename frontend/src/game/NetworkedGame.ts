@@ -5,12 +5,13 @@
 import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
 import { Renderer } from '@/rendering/Renderer';
 import { NetworkManager, NetworkRole } from '@/core/networking/NetworkManager';
-import type { SpawnBoxCommand, GameCommand, ContraptionData, UIState, GameEvent, WheelInputCommand, PlayerInitCommand } from '@shared/types/Commands';
+import type { GameCommand, ContraptionData, UIState, GameEvent, WheelInputCommand, PlayerInitCommand } from '@shared/types/Commands';
 import type { GameState } from '@shared/types/GameState';
 import type * as Matter from 'matter-js';
 import { Contraption, blockFromData } from '@/game/contraptions';
 import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
 import type { BlockData } from '@/game/contraptions/blocks/BaseBlock';
+import { WheelBlock } from '@/game/contraptions/blocks/WheelBlock';
 import { WORLD_BOUNDS } from '@shared/constants/physics';
 
 // Extended Matter.js types for our use case
@@ -30,6 +31,8 @@ interface SerializableBody {
     fillStyle: string;
     healthPercent?: number;
   };
+  ownerId?: string;
+  label?: string;
 }
 
 interface EffectEvent {
@@ -90,6 +93,9 @@ export class NetworkedGame {
   
   // Client-side: cache vertices for bodies (since they don't change)
   private verticesCache: Map<string, Array<{ x: number; y: number }>> = new Map();
+  // Client-side: cache owner/label metadata (sent once per body)
+  private ownerCache: Map<string, string> = new Map();
+  private labelCache: Map<string, string> = new Map();
   
   // Host-side: track which bodies we've sent full data for
   private sentBodies: Set<string> = new Set();
@@ -102,22 +108,16 @@ export class NetworkedGame {
   private gameEnded = false;
   private onGameOver?: (winner: 'host' | 'client') => void;
 
-  // Cooldowns per player
+  // Cooldowns per player (disabled)
   private buildCooldowns: Map<string, number> = new Map();
-
-  // Resources per player
-  private playerResources: Map<string, { energy: number }> = new Map();
-  private lastResourceUpdate = 0;
-  // Change the resource update interval and amount
-  private resourceUpdateInterval = 200; // 0.2 seconds
-  private resourceGainPerSecond = 1; // units per second for energy
-  private readonly maxEnergy = 20;
   
   // Track when both players are connected
   private bothPlayersConnected = false;
   
-  private _myResourcesCache: { energy: number } | null = null;
   public energy: number = 0;
+
+  // Host-side: schedule wheel input changes with a fixed delay for fairness
+  private pendingWheelInputs: Map<string, { value: number; activateAt: number }> = new Map();
 
   constructor(config: NetworkedGameConfig) {
     this.canvas = config.canvas;
@@ -127,15 +127,13 @@ export class NetworkedGame {
     this.onContraptionSpawned = config.onContraptionSpawned;
     this.onGameOver = config.onGameOver;
     
-    // Initialize resources for this player
-    this.playerResources.set(this.playerId, { energy: 0.0 });
-    this.lastResourceUpdate = Date.now();
-    this._myResourcesCache = { energy: 0.0 };
+    // No resources
     this.energy = 0;
     
     // Initialize renderer
     this.renderer = new Renderer(this.canvas);
     this.renderer.setPlayerRole(this.role);
+    this.renderer.setPlayerId(this.playerId);
     // Mirror view for clients so they perceive themselves on the right moving left
     if (this.role === 'client') {
       this.renderer.camera.mirrorX = true;
@@ -186,7 +184,7 @@ export class NetworkedGame {
       },
     });
 
-    // Set up click handler
+    // Disable click spawn
     this.setupClickHandler();
 
     // Minimal A/D input: host applies locally; client sends command
@@ -195,7 +193,7 @@ export class NetworkedGame {
       if (v === currentInput) return;
       currentInput = v;
       if (this.role === 'host') {
-        this.physics?.setWheelInput(this.playerId, v);
+        this.pendingWheelInputs.set(this.playerId, { value: v, activateAt: Date.now() + WheelBlock.INPUT_DELAY_MS });
       } else {
         const cmd: WheelInputCommand = { type: 'wheel-input', playerId: this.playerId, value: v };
         this.network.sendCommand(cmd as unknown as GameCommand);
@@ -205,10 +203,16 @@ export class NetworkedGame {
       if (e.repeat) return;
       if (e.key === 'a' || e.key === 'A') sendInput(1);
       if (e.key === 'd' || e.key === 'D') sendInput(-1);
+      if ((e.key === 'a' || e.key === 'A' || e.key === 'd' || e.key === 'D') && currentInput !== 0) {
+        this.renderer.effects.startWheelGlow(this.playerId);
+      }
     });
     window.addEventListener('keyup', (e) => {
       if (e.key === 'a' || e.key === 'A') sendInput(0);
       if (e.key === 'd' || e.key === 'D') sendInput(0);
+      if (e.key === 'a' || e.key === 'A' || e.key === 'd' || e.key === 'D') {
+        this.renderer.effects.stopWheelGlow(this.playerId);
+      }
     });
   }
 
@@ -248,53 +252,8 @@ export class NetworkedGame {
    * Set up click handler to spawn contraptions
    */
   private setupClickHandler(): void {
-    this.canvas.addEventListener('click', (e) => {
-      // Only spawn on left click (button 0 or undefined)
-      if (e.button !== undefined && e.button !== 0) return;
-
-      // Check if on cooldown
-      const cooldownEnd = this.buildCooldowns.get(this.playerId) || 0;
-      if (Date.now() < cooldownEnd) return;
-
-      // Check resources before spawning
-      if (!this.savedContraption) return;
-      const contraption = new Contraption('temp', 'temp');
-      this.savedContraption.blocks.forEach(blockData => {
-        const block = blockFromData(blockData as BlockData);
-        contraption.addBlock(block);
-      });
-      const cost = contraption.getCost();
-      
-      const currentResources = this.playerResources.get(this.playerId);
-      if (!currentResources || currentResources.energy < cost.energy) {
-        return;
-      }
-
-      // Convert screen coordinates to world coordinates using camera
-      const worldPos = this.renderer.camera.screenToWorld(e.clientX, e.clientY);
-      
-      // Snap to nearest ground level (upper or lower)
-      const UPPER_GROUND = -450; // Just above upper platform
-      const LOWER_GROUND = 450; // Just above lower platform
-      const snapY = Math.abs(worldPos.y - UPPER_GROUND) < Math.abs(worldPos.y - LOWER_GROUND) 
-        ? UPPER_GROUND 
-        : LOWER_GROUND;
-      
-      const command: SpawnBoxCommand = {
-        type: 'spawn-box',
-        playerId: this.playerId,
-        position: { x: worldPos.x, y: snapY },
-        contraption: this.savedContraption!,
-      };
-
-      // If host, execute command immediately
-      if (this.role === 'host') {
-        this.handleCommand(command);
-      } else {
-        // If client, send to host
-        this.network.sendCommand(command);
-      }
-      if (this.onContraptionSpawned) this.onContraptionSpawned();
+    this.canvas.addEventListener('click', (_e) => {
+      // disabled
     });
   }
 
@@ -308,10 +267,7 @@ export class NetworkedGame {
 
     switch (command.type) {
       case 'player-init':
-        // Initialize resources and spawn client's contraption if provided
-        if (!this.playerResources.has(command.playerId)) {
-          this.playerResources.set(command.playerId, { energy: 0.0 });
-        }
+        // Spawn client's contraption if provided
         if (command.playerId !== this.playerId && command.contraption) {
           const x = WORLD_BOUNDS.WIDTH * 0.85;
           const y = 300;
@@ -319,7 +275,16 @@ export class NetworkedGame {
         }
         break;
       case 'wheel-input':
-        this.physics.setWheelInput((command as WheelInputCommand).playerId, (command as WheelInputCommand).value);
+        {
+          const now = Date.now();
+          const oneWay = this.network.getEstimatedOneWayMs ? (this.network.getEstimatedOneWayMs() || 0) : 0;
+          const interp = this.interpolationDelay;
+          const activateAt = Math.max(now, now + WheelBlock.INPUT_DELAY_MS - oneWay - interp);
+          this.pendingWheelInputs.set((command as WheelInputCommand).playerId, {
+            value: (command as WheelInputCommand).value,
+            activateAt,
+          });
+        }
         break;
       case 'spawn-box':
         this.spawnContraption(command.position.x, command.position.y, command.playerId, command.contraption);
@@ -333,11 +298,7 @@ export class NetworkedGame {
   private spawnContraption(x: number, y: number, playerId: string, contraptionData: ContraptionData): void {
     if (!this.physics) return;
 
-    // Initialize resources for other player if not yet initialized
-    if (!this.playerResources.has(playerId)) {
-      console.log('Reset player resources for:', playerId);
-      this.playerResources.set(playerId, { energy: 0.0 });
-    }
+    // No resources
 
     // Determine direction: host faces right (1), client faces left (-1)
     const direction = playerId === this.playerId ? 1 : -1;
@@ -352,36 +313,13 @@ export class NetworkedGame {
       ? Math.max(0, Math.min(zone, x))
       : Math.max(mapWidth - zone, Math.min(mapWidth, x));
 
-    // Calculate build duration and set cooldown
-    const blockCount = contraptionData.blocks.length;
-    const durationMs = 500 + blockCount * 50;
-    const buildRadius = 40 + Math.sqrt(blockCount) * 10; // Scale with contraption size
-    this.buildCooldowns.set(playerId, Date.now() + durationMs);
+    // No build cooldown/resource animation; spawn immediately
+    const durationMs = 0;
 
-    // Calculate and deduct resources
-    const tempContraption = new Contraption('temp', 'temp');
-    contraptionData.blocks.forEach(blockData => {
-      const block = blockFromData(blockData as BlockData);
-      tempContraption.addBlock(block);
-    });
-    const cost = tempContraption.getCost();
-    
-    const currentResources = this.playerResources.get(playerId);
-    if (currentResources) {
-      currentResources.energy -= cost.energy;
-      this.playerResources.set(playerId, currentResources);
-    }
+    // No resource calculation
 
     // Trigger building dust effect (for host and sync to client)
-    this.renderer.effects.spawnBuildingDust(clampedX, y, durationMs, buildRadius);
-    this.effectEvents.push({
-      type: 'building',
-      x: clampedX,
-      y,
-      durationMs,
-      radius: buildRadius,
-      playerId,
-    });
+    // No build effects
 
     // Delay spawning until animation finishes
     setTimeout(() => {
@@ -443,6 +381,8 @@ export class NetworkedGame {
         });
         this.verticesCache.set(body.id, localVertices);
       }
+      if (body.ownerId && !this.ownerCache.has(body.id)) this.ownerCache.set(body.id, body.ownerId);
+      if (body.label && !this.labelCache.has(body.id)) this.labelCache.set(body.id, body.label);
     });
     
     this.snapshotBuffer.push(snapshot);
@@ -476,9 +416,12 @@ export class NetworkedGame {
       });
     }
 
-    // Keep only the last ~1s of snapshots
+    // Keep only the last ~1s of snapshots (by receive time when available), but never drain to zero
     const cutoff = Date.now() - 1000;
-    while (this.snapshotBuffer.length && ((this.snapshotBuffer[0].timestamp ?? this.snapshotBuffer[0]._receivedAt) as number) < cutoff) {
+    while (
+      this.snapshotBuffer.length > 1 &&
+      ((this.snapshotBuffer[0]._receivedAt ?? this.snapshotBuffer[0].timestamp) as number) < cutoff
+    ) {
       this.snapshotBuffer.shift();
     }
   }
@@ -486,23 +429,9 @@ export class NetworkedGame {
   /**
    * Handle UI update from host (client only) - UI Channel
    */
-  private handleUIUpdate(uiState: UIState): void {
+  private handleUIUpdate(_uiState: UIState): void {
     if (this.role === 'host') return;
-    
-    
-    // Update resources
-    Object.entries(uiState.resources).forEach(([playerId, resources]) => {
-      this.playerResources.set(playerId, resources);
-      if (playerId === this.playerId) {
-        this._myResourcesCache = resources;
-        this.energy = resources.energy;
-      } 
-    });
-
-    // Update cooldowns
-    Object.entries(uiState.cooldowns).forEach(([playerId, cooldownEnd]) => {
-      this.buildCooldowns.set(playerId, cooldownEnd);
-    });
+    // No resources/cooldowns
   }
 
   /**
@@ -568,6 +497,8 @@ export class NetworkedGame {
               return undefined;
             })(),
           },
+          ownerId: isNew ? ((body as ExtendedBody).ownerId || undefined) : undefined,
+          label: isNew ? (body.label || undefined) : undefined,
         };
       }),
       effects: this.effectEvents.length > 0 ? [...this.effectEvents] : undefined,
@@ -592,12 +523,7 @@ export class NetworkedGame {
   /**
    * Serialize UI state for network transmission (host only)
    */
-  private serializeUIState(): UIState {
-    return {
-      resources: Object.fromEntries(this.playerResources),
-      cooldowns: Object.fromEntries(this.buildCooldowns),
-    };
-  }
+  private serializeUIState(): UIState { return { resources: {}, cooldowns: {} }; }
 
   /**
    * Start the game loop
@@ -616,20 +542,19 @@ export class NetworkedGame {
 
     const now = Date.now();
 
-    // Update resources periodically (host only, and only when both players are connected)
-    if (this.role === 'host' && this.bothPlayersConnected && now - this.lastResourceUpdate >= this.resourceUpdateInterval) {
-      const intervalSeconds = this.resourceUpdateInterval / 1000;
-      const increment = this.resourceGainPerSecond * intervalSeconds;
-      this.playerResources.forEach((resources, playerId) => {
-        resources.energy = Math.min(this.maxEnergy, resources.energy + increment);
-        this.playerResources.set(playerId, resources);
-        if (playerId === this.playerId) {
-          this._myResourcesCache = resources;
-          this.energy = resources.energy;
+    // Host: apply any due delayed wheel inputs
+    if (this.role === 'host' && this.physics && this.pendingWheelInputs.size > 0) {
+      const toDelete: string[] = [];
+      this.pendingWheelInputs.forEach((pending, playerId) => {
+        if (pending.activateAt <= now) {
+          this.physics!.setWheelInput(playerId, pending.value);
+          toDelete.push(playerId);
         }
       });
-      this.lastResourceUpdate = now;
+      if (toDelete.length) toDelete.forEach(id => this.pendingWheelInputs.delete(id));
     }
+
+    // No periodic resource updates
 
     // Detect game over on host
     if (this.role === 'host' && this.physics && !this.gameEnded && this.physics.isGameOver()) {
@@ -705,8 +630,8 @@ export class NetworkedGame {
     for (let i = 0; i < this.snapshotBuffer.length - 1; i++) {
       const a = this.snapshotBuffer[i];
       const b = this.snapshotBuffer[i + 1];
-      const ta = (a.timestamp ?? a._receivedAt);
-      const tb = (b.timestamp ?? b._receivedAt);
+      const ta = (a._receivedAt ?? a.timestamp);
+      const tb = (b._receivedAt ?? b.timestamp);
       if (ta <= targetTime && targetTime <= tb) {
         prev = a;
         next = b;
@@ -714,8 +639,8 @@ export class NetworkedGame {
       }
     }
 
-    const tPrev = (prev.timestamp ?? prev._receivedAt);
-    const tNext = (next.timestamp ?? next._receivedAt);
+    const tPrev = (prev._receivedAt ?? prev.timestamp);
+    const tNext = (next._receivedAt ?? next.timestamp);
     const alpha = tNext > tPrev ? (targetTime - tPrev) / (tNext - tPrev) : 0;
     const clampedAlpha = Math.max(0, Math.min(1, alpha));
 
@@ -778,6 +703,9 @@ export class NetworkedGame {
         isStatic: a.isStatic ?? b.isStatic,
         render: a.render ?? b.render ?? { fillStyle: '#3498db' },
       };
+      // Attach metadata for rendering (wheel glow): owner and label if known
+      (fakeBody as unknown as { ownerId?: string }).ownerId = this.ownerCache.get(id);
+      (fakeBody as unknown as { label?: string }).label = this.labelCache.get(id);
       result.push(fakeBody as Matter.Body);
     });
 
@@ -810,13 +738,8 @@ export class NetworkedGame {
     if (data) this.savedContraption = data;
   }
 
-  getPlayerResources(_playerId: string): { energy: number } | null {
-    return this._myResourcesCache || this.playerResources.get(this.playerId) || null;
-  }
-
-  getMyEnergy(): number {
-    return this._myResourcesCache?.energy ?? 0;
-  }
+  getPlayerResources(_playerId: string): { energy: number } | null { return null; }
+  getMyEnergy(): number { return 0; }
 
   getBaseHealth(): { mine: number; enemy: number } {
     if (this.role === 'host' && this.physics) {

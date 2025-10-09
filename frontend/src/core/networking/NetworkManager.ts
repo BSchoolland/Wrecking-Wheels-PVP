@@ -80,6 +80,9 @@ export class NetworkManager {
   private onEvent: (event: GameEvent) => void;
   private onConnected: () => void;
   private onDisconnected: () => void;
+  private pingIntervalId: number | null = null;
+  private estimatedOneWayMs: number = 0;
+  private bestRttMs: number = Number.POSITIVE_INFINITY;
 
   constructor(config: NetworkManagerConfig) {
     this.role = config.role;
@@ -202,17 +205,36 @@ export class NetworkManager {
           this.onUIUpdate(message.payload as unknown as UIState);
         } else if (message.type === 'event') {
           this.onEvent(message.payload as unknown as GameEvent);
+        } else if (message.type === 'ping') {
+          // Echo back immediately
+          this.peerConnection?.sendReliableInternal({ type: 'pong', payload: message.payload });
+        } else if (message.type === 'pong') {
+          const t0 = (message.payload as { t: number }).t;
+          if (typeof t0 === 'number') {
+            const rtt = performance.now() - t0;
+            this.bestRttMs = Math.min(this.bestRttMs, rtt);
+            // EMA toward near-best RTT to reduce asymmetry noise
+            const target = Math.min(rtt, this.bestRttMs * 1.25);
+            const oneWay = target / 2;
+            this.estimatedOneWayMs = this.estimatedOneWayMs ? (this.estimatedOneWayMs * 0.8 + oneWay * 0.2) : oneWay;
+          }
         }
       },
       onConnect: () => {
         console.log(`[${this.role}] ✓ WebRTC peer connection established!`);
         this.connectionState = 'connected';
         this.onConnected();
+        // Start periodic pings over reliable channel
+        if (this.pingIntervalId) window.clearInterval(this.pingIntervalId);
+        this.pingIntervalId = window.setInterval(() => {
+          try { this.peerConnection?.sendReliableInternal({ type: 'ping', payload: { t: performance.now() } }); } catch (_) {}
+        }, 1000);
       },
       onDisconnect: () => {
         console.log(`[${this.role}] WebRTC peer connection closed`);
         this.connectionState = 'disconnected';
         this.onDisconnected();
+        if (this.pingIntervalId) { window.clearInterval(this.pingIntervalId); this.pingIntervalId = null; }
       },
     });
 
@@ -247,15 +269,31 @@ export class NetworkManager {
             this.onUIUpdate(message.payload as unknown as UIState);
           } else if (message.type === 'event') {
             this.onEvent(message.payload as unknown as GameEvent);
+          } else if (message.type === 'ping') {
+            this.peerConnection?.sendReliableInternal({ type: 'pong', payload: message.payload });
+          } else if (message.type === 'pong') {
+            const t0 = (message.payload as { t: number }).t;
+            if (typeof t0 === 'number') {
+              const rtt = performance.now() - t0;
+              this.bestRttMs = Math.min(this.bestRttMs, rtt);
+              const target = Math.min(rtt, this.bestRttMs * 1.25);
+              const oneWay = target / 2;
+              this.estimatedOneWayMs = this.estimatedOneWayMs ? (this.estimatedOneWayMs * 0.8 + oneWay * 0.2) : oneWay;
+            }
           }
         },
         onConnect: () => {
           this.connectionState = 'connected';
           this.onConnected();
+          if (this.pingIntervalId) window.clearInterval(this.pingIntervalId);
+          this.pingIntervalId = window.setInterval(() => {
+            try { this.peerConnection?.sendReliableInternal({ type: 'ping', payload: { t: performance.now() } }); } catch (_) {}
+          }, 1000);
         },
         onDisconnect: () => {
           this.connectionState = 'disconnected';
           this.onDisconnected();
+          if (this.pingIntervalId) { window.clearInterval(this.pingIntervalId); this.pingIntervalId = null; }
         },
       });
 
@@ -365,5 +403,8 @@ export class NetworkManager {
     try { this.peerConnection?.close(); } catch (e) { /* noop */ }
     this.peerConnection = null;
     this.connectionState = 'disconnected';
+    if (this.pingIntervalId) { window.clearInterval(this.pingIntervalId); this.pingIntervalId = null; }
   }
+
+  getEstimatedOneWayMs(): number { return this.estimatedOneWayMs || 0; }
 }

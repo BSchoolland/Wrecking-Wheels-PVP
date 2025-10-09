@@ -265,6 +265,13 @@ export class PeerConnection {
   }
 
   /**
+   * Send message via reliable channel (internal utility)
+   */
+  public sendReliableInternal(message: NetworkMessage): void {
+    this.sendReliable(message);
+  }
+
+  /**
    * Create offer (for initiating connection)
    */
   async createOffer(): Promise<RTCSessionDescriptionInit> {

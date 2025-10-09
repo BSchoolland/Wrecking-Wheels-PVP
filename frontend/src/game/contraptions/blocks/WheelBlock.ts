@@ -10,6 +10,7 @@ export class WheelBlock extends BaseBlock {
   // Public so builder UI can reference for rendering
   static readonly WHEEL_RADIUS = 12.5;
   static readonly ATTACHMENT_HEIGHT = 4;
+  static readonly INPUT_DELAY_MS = 500;
   
   constructor(id: string, gridX: number, gridY: number) {
     super(id, 'wheel', gridX, gridY);

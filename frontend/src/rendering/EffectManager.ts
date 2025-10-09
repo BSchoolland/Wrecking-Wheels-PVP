@@ -5,6 +5,7 @@
 
 import Matter from 'matter-js';
 import type { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
+import { WheelBlock } from '@/game/contraptions/blocks/WheelBlock';
 
 interface Particle {
   x: number;
@@ -70,6 +71,10 @@ export class EffectManager {
   private particlePool: Particle[] = [];
   private damageNumberPool: DamageNumber[] = [];
   explosionFlashSizeScale: number = 2;
+
+  // Wheel input glow per player
+  private wheelGlow: Map<string, { startedAt: number; stopping: boolean; stoppedAt?: number; startIntensityAtStop?: number; intensity: number }>
+    = new Map();
 
   constructor() {
     // Pre-allocate pools
@@ -251,7 +256,8 @@ export class EffectManager {
    */
   update(deltaTime: number): void {
     const dt = deltaTime / 1000; // Convert to seconds
-    
+    const nowMs = performance.now();
+
     // Update particles
     for (let i = this.particles.length - 1; i >= 0; i--) {
       const p = this.particles[i];
@@ -309,6 +315,20 @@ export class EffectManager {
       const visibleTime = e.elapsed - e.delay;
       if (visibleTime >= e.appearDuration + e.fadeDuration) this.explosions.splice(i, 1);
     }
+
+    // Update wheel glow intensities
+    this.wheelGlow.forEach((g, playerId) => {
+      if (!g.stopping) {
+        const rampUpDurationMs = WheelBlock.INPUT_DELAY_MS;
+        const t = (nowMs - g.startedAt) / rampUpDurationMs;
+        g.intensity = Math.max(0, Math.min(1, t));
+      } else if (g.stoppedAt !== undefined && g.startIntensityAtStop !== undefined) {
+        const rampDownDurationMs = WheelBlock.INPUT_DELAY_MS;
+        const t = (nowMs - g.stoppedAt) / rampDownDurationMs;
+        g.intensity = Math.max(0, g.startIntensityAtStop * (1 - t));
+        if (g.intensity <= 0) this.wheelGlow.delete(playerId);
+      }
+    });
   }
 
   /**
@@ -475,6 +495,70 @@ export class EffectManager {
     this.blockTints.clear();
     this.ghostBlocks = [];
     this.explosions = [];
+    this.wheelGlow.clear();
+  }
+
+  startWheelGlow(playerId: string): void {
+    const existing = this.wheelGlow.get(playerId);
+    if (existing && !existing.stopping) return;
+    this.wheelGlow.set(playerId, { startedAt: performance.now(), stopping: false, intensity: existing?.intensity || 0 });
+  }
+
+  stopWheelGlow(playerId: string): void {
+    const existing = this.wheelGlow.get(playerId);
+    const now = performance.now();
+    if (!existing) {
+      // nothing to fade
+      return;
+    }
+    if (!existing.stopping) {
+      existing.stopping = true;
+      existing.stoppedAt = now;
+      existing.startIntensityAtStop = existing.intensity;
+    }
+  }
+
+  getWheelGlowIntensity(playerId: string): number {
+    return this.wheelGlow.get(playerId)?.intensity || 0;
+  }
+
+  renderWheelGlows(ctx: CanvasRenderingContext2D, bodies: Matter.Body[], myPlayerId: string | null): void {
+    if (!myPlayerId) return;
+    const glowIntensity = this.getWheelGlowIntensity(myPlayerId);
+    const minIntensity = 0;
+    if (glowIntensity <= minIntensity) return;
+
+    const wheelLabelSuffix = '-wheel';
+    const maxWheelCircleRadius = 14;
+    const redMax = 255;
+    const greenMax = 165;
+    const blueMax = 0;
+    const lineWidthBase = 1;
+    const lineWidthScale = 2;
+    const alphaBase = 0.05;
+    const alphaScale = 0.5;
+    const arcRadiusPadding = 0.5;
+    const fullCircleRadians = Math.PI * 2;
+
+    ctx.save();
+    this.particles; // no-op to avoid unused warnings in some setups
+    for (const body of bodies) {
+      const label = (body as unknown as { label?: string }).label;
+      const ownerId = (body as unknown as { ownerId?: string }).ownerId;
+      if (!body.circleRadius) continue;
+      const isWheel = (label && label.endsWith(wheelLabelSuffix)) || (typeof body.circleRadius === 'number' && body.circleRadius <= maxWheelCircleRadius);
+      if (!isWheel || ownerId !== myPlayerId) continue;
+      const r = Math.round(redMax * glowIntensity);
+      const g = Math.round(greenMax * glowIntensity);
+      const b = blueMax;
+      ctx.strokeStyle = `rgb(${r},${g},${b})`;
+      ctx.lineWidth = lineWidthBase + lineWidthScale * glowIntensity;
+      ctx.globalAlpha = alphaBase + alphaScale * glowIntensity;
+      ctx.beginPath();
+      ctx.arc(body.position.x, body.position.y, body.circleRadius + arcRadiusPadding, 0, fullCircleRadians);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 }
 

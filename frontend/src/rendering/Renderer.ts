@@ -18,6 +18,7 @@ export class Renderer {
   private onResizeHandler = () => this.resizeCanvas();
   private lastFrameTime = performance.now();
   private playerRole: 'host' | 'client' | null = null;
+  private myPlayerId: string | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -33,6 +34,10 @@ export class Renderer {
 
   setPlayerRole(role: 'host' | 'client'): void {
     this.playerRole = role;
+  }
+
+  setPlayerId(playerId: string): void {
+    this.myPlayerId = playerId;
   }
 
   private resizeCanvas(): void {
@@ -253,6 +258,9 @@ export class Renderer {
 
     // Render ghost blocks
     this.effects.renderGhostBlocks(this.ctx);
+
+    // Draw wheel glow overlays for local player's wheels
+    this.effects.renderWheelGlows(this.ctx, bodies, this.myPlayerId);
 
     // Render particles and damage numbers
     this.effects.render(this.ctx);
