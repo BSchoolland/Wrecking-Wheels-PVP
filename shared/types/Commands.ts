@@ -25,8 +25,7 @@ export type GameCommand =
   | ReadyCommand
   | SpawnBoxCommand
   | PlayerInitCommand
-  | WheelInputCommand
-  | RocketHoldCommand;
+  | BlockInputCommand;
 
 export interface DeployCommand {
   type: 'deploy';
@@ -54,16 +53,12 @@ export interface PlayerInitCommand {
   contraption?: ContraptionData;
 }
 
-export interface WheelInputCommand {
-  type: 'wheel-input';
+export interface BlockInputCommand {
+  type: 'block-input';
   playerId: string;
-  value: number; // -1 = reverse (D), 0 = stop, +1 = forward (A)
-}
-
-export interface RocketHoldCommand {
-  type: 'rocket-hold';
-  playerId: string;
-  value: boolean; // true = hold (ignite after delay), false = release (stop)
+  bindingId: string; // e.g. 'rocket-hold', 'wheel-forward', 'wheel-reverse'
+  phase: 'press' | 'release' | 'change';
+  payload?: { [key: string]: unknown };
 }
 
 /**

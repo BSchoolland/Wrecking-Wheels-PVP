@@ -5,14 +5,14 @@
 import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
 import { Renderer } from '@/rendering/Renderer';
 import { NetworkManager, NetworkRole } from '@/core/networking/NetworkManager';
-import type { GameCommand, ContraptionData, UIState, GameEvent, WheelInputCommand, PlayerInitCommand, RocketHoldCommand } from '@shared/types/Commands';
+import type { GameCommand, ContraptionData, UIState, GameEvent, PlayerInitCommand, BlockInputCommand } from '@shared/types/Commands';
 import type { GameState } from '@shared/types/GameState';
 import type * as Matter from 'matter-js';
 import { Contraption, blockFromData } from '@/game/contraptions';
 import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
 import type { BlockData } from '@/game/contraptions/blocks/BaseBlock';
-import { WheelBlock } from '@/game/contraptions/blocks/WheelBlock';
 import { WORLD_BOUNDS } from '@shared/constants/physics';
+import { InputController, InputRegistry } from '@/game/input/InputSystem';
 
 // Extended Matter.js types for our use case
 interface ExtendedBody extends Matter.Body {
@@ -123,10 +123,10 @@ export class NetworkedGame {
   
   public energy: number = 0;
 
-  // Host-side: schedule wheel input changes with a fixed delay for fairness
-  private pendingWheelInputs: Map<string, { value: number; activateAt: number }> = new Map();
-  // Host-side: schedule rocket hold activation with fixed delay while held
-  private pendingRocketHolds: Map<string, { value: boolean; activateAt: number }> = new Map();
+  // Host-side: schedule generic block inputs keyed by binding id
+  private pendingInputs: Map<string, { playerId: string; bindingId: string; phase: 'press' | 'release' | 'change'; activateAt: number; payload?: { [k: string]: unknown } }[]> = new Map();
+
+  private inputController: InputController | null = null;
 
   constructor(config: NetworkedGameConfig) {
     this.canvas = config.canvas;
@@ -198,59 +198,22 @@ export class NetworkedGame {
     // Disable click spawn
     this.setupClickHandler();
 
-    // Minimal A/D input: host applies locally; client sends command
-    let currentInput = 0;
-    const sendInput = (v: number) => {
-      if (v === currentInput) return;
-      currentInput = v;
+    // Input controller setup
+    const sendGeneric = (bindingId: string, phase: 'press' | 'release' | 'change', payload?: { [k: string]: unknown }) => {
       if (this.role === 'host') {
-        this.pendingWheelInputs.set(this.playerId, { value: v, activateAt: Date.now() + WheelBlock.INPUT_DELAY_MS });
+        const binding = InputRegistry.getById(bindingId);
+        const delay = binding?.pressDelayMs || 0;
+        const when = Date.now() + (phase === 'press' ? delay : 0);
+        const list = this.pendingInputs.get(bindingId) || [];
+        list.push({ playerId: this.playerId, bindingId, phase, activateAt: when, payload });
+        this.pendingInputs.set(bindingId, list);
       } else {
-        const cmd: WheelInputCommand = { type: 'wheel-input', playerId: this.playerId, value: v };
+        const cmd: BlockInputCommand = { type: 'block-input', playerId: this.playerId, bindingId, phase, payload };
         this.network.sendCommand(cmd as unknown as GameCommand);
       }
     };
-    window.addEventListener('keydown', (e) => {
-      if (e.repeat) return;
-      if (e.key === 'a' || e.key === 'A') sendInput(1);
-      if (e.key === 'd' || e.key === 'D') sendInput(-1);
-      if ((e.key === 'a' || e.key === 'A' || e.key === 'd' || e.key === 'D') && currentInput !== 0) {
-        this.renderer.effects.startWheelGlow(this.playerId);
-      }
-      if (e.key === 'Shift') {
-        const delay = 500;
-        if (this.role === 'host') {
-          this.pendingRocketHolds.set(this.playerId, { value: true, activateAt: Date.now() + delay });
-        } else {
-          const cmd: RocketHoldCommand = { type: 'rocket-hold', playerId: this.playerId, value: true };
-          this.network.sendCommand(cmd as unknown as GameCommand);
-        }
-      }
-    });
-    window.addEventListener('keyup', (e) => {
-      if (e.key === 'a' || e.key === 'A') sendInput(0);
-      if (e.key === 'd' || e.key === 'D') sendInput(0);
-      if (e.key === 'a' || e.key === 'A' || e.key === 'd' || e.key === 'D') {
-        this.renderer.effects.stopWheelGlow(this.playerId);
-      }
-      if (e.key === 'Shift') {
-        if (this.role === 'host') {
-          // immediate stop
-          this.pendingRocketHolds.delete(this.playerId);
-          this.physics?.setRocketHold(this.playerId, false);
-        } else {
-          const cmd: RocketHoldCommand = { type: 'rocket-hold', playerId: this.playerId, value: false };
-          this.network.sendCommand(cmd as unknown as GameCommand);
-        }
-      }
-    });
-    window.addEventListener('keyup', (e) => {
-      if (e.key === 'a' || e.key === 'A') sendInput(0);
-      if (e.key === 'd' || e.key === 'D') sendInput(0);
-      if (e.key === 'a' || e.key === 'A' || e.key === 'd' || e.key === 'D') {
-        this.renderer.effects.stopWheelGlow(this.playerId);
-      }
-    });
+    this.inputController = new InputController({ role: this.role, playerId: this.playerId, sendCommand: sendGeneric, physics: this.role === 'host' ? this.physics : null, effects: this.renderer.effects });
+    this.inputController.attach();
   }
 
   /**
@@ -311,31 +274,18 @@ export class NetworkedGame {
           this.spawnContraption(x, y, command.playerId, command.contraption);
         }
         break;
-      case 'wheel-input':
+      case 'block-input':
         {
+          const c = command as BlockInputCommand;
+          const binding = InputRegistry.getById(c.bindingId);
           const now = Date.now();
           const oneWay = this.network.getEstimatedOneWayMs ? (this.network.getEstimatedOneWayMs() || 0) : 0;
           const interp = this.interpolationDelay;
-          const activateAt = Math.max(now, now + WheelBlock.INPUT_DELAY_MS - oneWay - interp);
-          this.pendingWheelInputs.set((command as WheelInputCommand).playerId, {
-            value: (command as WheelInputCommand).value,
-            activateAt,
-          });
-        }
-        break;
-      case 'rocket-hold':
-        {
-          const now = Date.now();
-          const oneWay = this.network.getEstimatedOneWayMs ? (this.network.getEstimatedOneWayMs() || 0) : 0;
-          const interp = this.interpolationDelay;
-          const activateAt = Math.max(now, now + 500 - oneWay - interp);
-          const c = command as RocketHoldCommand;
-          if (c.value) {
-            this.pendingRocketHolds.set(c.playerId, { value: true, activateAt });
-          } else {
-            this.pendingRocketHolds.delete(c.playerId);
-            this.physics?.setRocketHold(c.playerId, false);
-          }
+          const baseDelay = c.phase === 'press' ? (binding?.pressDelayMs || 0) : 0;
+          const activateAt = Math.max(now, now + baseDelay - oneWay - interp);
+          const list = this.pendingInputs.get(c.bindingId) || [];
+          list.push({ playerId: c.playerId, bindingId: c.bindingId, phase: c.phase, activateAt, payload: c.payload });
+          this.pendingInputs.set(c.bindingId, list);
         }
         break;
       case 'spawn-box':
@@ -606,30 +556,23 @@ export class NetworkedGame {
 
     const now = Date.now();
 
-    // Host: apply any due delayed wheel inputs
-    if (this.role === 'host' && this.physics && this.pendingWheelInputs.size > 0) {
-      const toDelete: string[] = [];
-      this.pendingWheelInputs.forEach((pending, playerId) => {
-        if (pending.activateAt <= now) {
-          this.physics!.setWheelInput(playerId, pending.value);
-          toDelete.push(playerId);
+    // Host: apply any due delayed generic inputs
+    if (this.role === 'host' && this.physics && this.pendingInputs.size > 0) {
+      const toClear: string[] = [];
+      this.pendingInputs.forEach((list, bindingId) => {
+        const binding = InputRegistry.getById(bindingId);
+        if (!binding) { toClear.push(bindingId); return; }
+        const remain: typeof list = [];
+        for (const item of list) {
+          if (item.activateAt <= now) {
+            binding.apply({ role: this.role, playerId: item.playerId, physics: this.physics }, item.phase, item.payload);
+          } else {
+            remain.push(item);
+          }
         }
+        if (remain.length > 0) this.pendingInputs.set(bindingId, remain); else toClear.push(bindingId);
       });
-      if (toDelete.length) toDelete.forEach(id => this.pendingWheelInputs.delete(id));
-    }
-
-    // Host: ignite rockets after delay
-    if (this.role === 'host' && this.physics && this.pendingRocketHolds.size > 0) {
-      const toDelete: string[] = [];
-      this.pendingRocketHolds.forEach((pending, playerId) => {
-        if (pending.activateAt <= now) {
-          console.log('igniting rockets for player', playerId);
-          this.physics!.igniteRocketsForPlayer(playerId);
-          this.physics!.setRocketHold(playerId, true);
-          toDelete.push(playerId);
-        }
-      });
-      if (toDelete.length) toDelete.forEach(id => this.pendingRocketHolds.delete(id));
+      if (toClear.length) toClear.forEach(id => this.pendingInputs.delete(id));
     }
 
     // No periodic resource updates

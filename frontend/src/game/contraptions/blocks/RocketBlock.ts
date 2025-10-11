@@ -5,6 +5,7 @@
 import Matter from 'matter-js';
 import { BaseBlock, AttachmentDirection, PhysicsSpawnResult } from './BaseBlock';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
+import { InputRegistry } from '@/game/input/InputSystem';
 
 export class RocketBlock extends BaseBlock {
   static readonly INPUT_DELAY_MS = 500;
@@ -60,4 +61,21 @@ export class RocketBlock extends BaseBlock {
   }
 }
 
-
+// Register input binding for rockets at module load
+(() => {
+  InputRegistry.register({
+    id: 'rocket-hold',
+    keys: ['Shift'],
+    pressDelayMs: RocketBlock.INPUT_DELAY_MS,
+    apply: (ctx, phase) => {
+      const physics = ctx.physics;
+      if (!physics) return;
+      if (phase === 'press') {
+        physics.igniteRocketsForPlayer(ctx.playerId);
+        physics.setRocketHold(ctx.playerId, true);
+      } else if (phase === 'release') {
+        physics.setRocketHold(ctx.playerId, false);
+      }
+    }
+  });
+})();

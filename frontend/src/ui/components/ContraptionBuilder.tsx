@@ -7,6 +7,7 @@ import Matter from 'matter-js';
 import { Contraption, BlockType, createBlock, blockFromData } from '@/game/contraptions';
 import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
 import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
+import { InputController } from '@/game/input/InputSystem';
 import { Renderer } from '@/rendering/Renderer';
 import { getTestSpawnPosition } from '@/game/terrain/MapLoader';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
@@ -419,44 +420,9 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     
     physicsRef.current.start();
 
-    // Simple A/D controls for wheels + Shift for rockets (with 500ms delay while held)
-    let currentInput = 0;
-    let rocketTimer: number | null = null;
-    const sendInput = (v: number) => {
-      if (v === currentInput) return;
-      currentInput = v;
-      physicsRef.current?.setWheelInput('local', v);
-      if (v !== 0) {
-        rendererRef.current?.effects.startWheelGlow('local');
-      } else {
-        rendererRef.current?.effects.stopWheelGlow('local');
-      }
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.repeat) return;
-      if (e.key === 'a' || e.key === 'A') sendInput(1);
-      if (e.key === 'd' || e.key === 'D') sendInput(-1);
-      if (e.key === 'Shift') {
-        if (rocketTimer != null) return;
-        rocketTimer = window.setTimeout(() => {
-          rocketTimer = null;
-          physicsRef.current?.igniteRocketsForPlayer('local');
-          physicsRef.current?.setRocketHold('local', true);
-        }, 500);
-      }
-    };
-    const onKeyUp = (e: KeyboardEvent) => {
-      if (e.key === 'a' || e.key === 'A' || e.key === 'd' || e.key === 'D') sendInput(0);
-      if (e.key === 'Shift') {
-        if (rocketTimer != null) {
-          window.clearTimeout(rocketTimer);
-          rocketTimer = null;
-        }
-        physicsRef.current?.setRocketHold('local', false);
-      }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    window.addEventListener('keyup', onKeyUp);
+    // Use generic input controller in local mode
+    const inputController = new InputController({ role: 'host', playerId: 'local', physics: physicsRef.current, effects: rendererRef.current?.effects || null });
+    inputController.attach();
     
     // Start render loop
     const renderLoop = () => {
@@ -469,8 +435,7 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     renderLoop();
 
     return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('keyup', onKeyUp);
+      inputController.detach();
     };
   }, [isTesting]);
 

@@ -5,6 +5,7 @@
 import Matter from 'matter-js';
 import { BaseBlock, AttachmentDirection, PhysicsSpawnResult } from './BaseBlock';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
+import { InputRegistry } from '@/game/input/InputSystem';
 
 export class WheelBlock extends BaseBlock {
   // Public so builder UI can reference for rendering
@@ -92,4 +93,33 @@ export class WheelBlock extends BaseBlock {
     };
   }
 }
+
+// Register input bindings for wheels at module load
+(() => {
+  InputRegistry.register({
+    id: 'wheel-axis',
+    keys: ['a', 'A', 'd', 'D'],
+    pressDelayMs: WheelBlock.INPUT_DELAY_MS,
+    apply: (ctx, phase, payload) => {
+      const physics = ctx.physics;
+      if (!physics) return;
+      const value = phase === 'release' ? 0 : (typeof payload?.value === 'number' ? (payload.value as number) : 0);
+      physics.setWheelInput(ctx.playerId, value);
+    },
+    onLocalVisual: (effects, playerId, phase, payload) => {
+      const value = phase === 'release' ? 0 : (typeof payload?.value === 'number' ? (payload.value as number) : 0);
+      if (value !== 0) {
+        effects.startWheelGlow && effects.startWheelGlow(playerId);
+      } else {
+        effects.stopWheelGlow && effects.stopWheelGlow(playerId);
+      }
+    },
+    makePayload: (e) => {
+      const key = e.key;
+      if (key === 'a' || key === 'A') return { value: 1 };
+      if (key === 'd' || key === 'D') return { value: -1 };
+      return undefined;
+    }
+  });
+})();
 
