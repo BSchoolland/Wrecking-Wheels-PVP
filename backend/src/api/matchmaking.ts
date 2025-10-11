@@ -5,7 +5,10 @@
 
 import { Router, Request, Response } from 'express';
 
-const router = Router();
+const router = Router() as unknown as {
+  post: typeof Router.prototype.post;
+  get: typeof Router.prototype.get;
+};
 
 // In-memory storage for lobbies (replace with database later)
 interface Lobby {
@@ -23,7 +26,7 @@ const lobbies = new Map<string, Lobby>();
  * Create a new lobby
  */
 router.post('/lobby/create', (req: Request, res: Response) => {
-  const { hostId, maxPlayers = 2 } = req.body;
+  const { hostId, maxPlayers = 2 } = (req.body ?? {}) as { hostId?: string; maxPlayers?: number };
 
   if (!hostId) {
     return res.status(400).json({ error: 'hostId is required' });
@@ -56,7 +59,7 @@ router.post('/lobby/create', (req: Request, res: Response) => {
  * Join an existing lobby
  */
 router.post('/lobby/join', (req: Request, res: Response) => {
-  const { lobbyId, playerId } = req.body;
+  const { lobbyId, playerId } = (req.body ?? {}) as { lobbyId?: string; playerId?: string };
 
   if (!lobbyId || !playerId) {
     return res.status(400).json({ error: 'lobbyId and playerId are required' });
@@ -100,7 +103,7 @@ router.post('/lobby/join', (req: Request, res: Response) => {
  * Get lobby status
  */
 router.get('/lobby/:lobbyId', (req: Request, res: Response) => {
-  const { lobbyId } = req.params;
+  const { lobbyId } = (req.params ?? {}) as { lobbyId: string };
   const lobby = lobbies.get(lobbyId);
 
   if (!lobby) {
@@ -137,7 +140,7 @@ router.get('/lobbies', (_req: Request, res: Response) => {
  * Leave a lobby
  */
 router.post('/lobby/leave', (req: Request, res: Response) => {
-  const { lobbyId, playerId } = req.body;
+  const { lobbyId, playerId } = (req.body ?? {}) as { lobbyId?: string; playerId?: string };
 
   if (!lobbyId || !playerId) {
     return res.status(400).json({ error: 'lobbyId and playerId are required' });

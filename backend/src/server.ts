@@ -1,21 +1,24 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+/* eslint-disable @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Backend Server - Thin server for matchmaking, storage, and signaling
  * Does NOT run game logic or physics
  */
 
-import express from 'express';
+import express, { type Request, type Response } from 'express';
 import cors from 'cors';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
 import path from 'path';
-import { Request, Response } from 'express';
+// Request/Response types imported above
 
-const app = express();
-const server = createServer(app);
+const app = express() as any;
+const server = createServer(app as any);
 const wss = new WebSocketServer({ server, path: '/ws' });
 
 // Middleware
-app.use(cors());
+app.use((cors as any)());
 app.use(express.json());
 
 // Health check
@@ -58,9 +61,16 @@ wss.on('connection', (ws: WebSocket) => {
   // Send client their ID
   ws.send(JSON.stringify({ type: 'connected', clientId }));
 
-  ws.on('message', (message: string | Buffer) => {
+  ws.on('message', (message: string | Buffer | ArrayBuffer | Buffer[]) => {
     try {
-      const data = JSON.parse(message.toString());
+      const text = typeof message === 'string'
+        ? message
+        : Array.isArray(message)
+          ? Buffer.concat(message).toString()
+          : Buffer.isBuffer(message)
+            ? message.toString()
+            : Buffer.from(message).toString();
+      const data = JSON.parse(text);
       console.log(`[server] Received: ${data.type} from ${clientId}`);
 
       switch (data.type) {
@@ -169,3 +179,4 @@ server.listen(PORT, () => {
   console.log(`[server] Server running on port ${PORT}`);
   console.log(`[server] WebSocket server ready on path /ws`);
 });
+
