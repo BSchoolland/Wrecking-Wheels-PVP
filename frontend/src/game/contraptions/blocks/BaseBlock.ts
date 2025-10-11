@@ -5,7 +5,7 @@
 import Matter from 'matter-js';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 
-export type BlockType = 'core' | 'simple' | 'wheel' | 'spike' | 'gray' | 'tnt';
+export type BlockType = 'core' | 'simple' | 'wheel' | 'spike' | 'gray' | 'tnt' | 'rocket';
 export type AttachmentDirection = 'top' | 'right' | 'bottom' | 'left';
 export type DamageType = 'sharp' | 'blunt' | 'blast';
 

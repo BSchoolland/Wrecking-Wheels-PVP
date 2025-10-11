@@ -10,6 +10,7 @@ export { WheelBlock } from './blocks/WheelBlock';
 export { SpikeBlock } from './blocks/SpikeBlock';
 export { GrayBlock } from './blocks/GrayBlock';
 export { TNTBlock } from './blocks/TNTBlock';
+// RocketBlock export not required for external usage right now
 export { Contraption, setContraptionDebug, CONTRAPTION_DEBUG, setContraptionStaticDebug, CONTRAPTION_STATIC_DEBUG } from './Contraption';
 export type { ContraptionSaveData } from './Contraption';
 
@@ -21,6 +22,7 @@ import { WheelBlock } from './blocks/WheelBlock';
 import { SpikeBlock } from './blocks/SpikeBlock';
 import { GrayBlock } from './blocks/GrayBlock';
 import { TNTBlock } from './blocks/TNTBlock';
+import { RocketBlock } from '@/game/contraptions/blocks/RocketBlock';
 
 export function createBlock(type: BlockType, gridX: number, gridY: number): BaseBlock {
   const id = `${type}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
@@ -38,6 +40,8 @@ export function createBlock(type: BlockType, gridX: number, gridY: number): Base
       return new GrayBlock(id, gridX, gridY);
     case 'tnt':
       return new TNTBlock(id, gridX, gridY);
+    case 'rocket':
+      return new RocketBlock(id, gridX, gridY);
     default:
       throw new Error(`Unknown block type: ${type}`);
   }
@@ -111,6 +115,17 @@ export function blockFromData(data: BlockData): BaseBlock {
       tnt.fragile = data.fragile ?? false;
       if (data.rotation !== undefined) tnt.rotation = data.rotation;
       return tnt;
+    }
+    case 'rocket': {
+      const rocket = new RocketBlock(data.id, data.gridX, data.gridY);
+      rocket.maxHealth = data.maxHealth ?? 100;
+      rocket.health = data.health;
+      rocket.stiffness = data.stiffness;
+      if (data.damage !== undefined) rocket.damage = data.damage;
+      if (data.knockback !== undefined) rocket.knockback = data.knockback;
+      rocket.fragile = data.fragile ?? false;
+      if (data.rotation !== undefined) rocket.rotation = data.rotation;
+      return rocket;
     }
     default:
       throw new Error(`Unknown block type: ${data.type}`);

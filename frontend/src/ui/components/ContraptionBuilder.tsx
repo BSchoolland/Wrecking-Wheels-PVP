@@ -419,8 +419,9 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     
     physicsRef.current.start();
 
-    // Simple A/D controls for wheels
+    // Simple A/D controls for wheels + Shift for rockets (with 500ms delay while held)
     let currentInput = 0;
+    let rocketTimer: number | null = null;
     const sendInput = (v: number) => {
       if (v === currentInput) return;
       currentInput = v;
@@ -435,9 +436,24 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
       if (e.repeat) return;
       if (e.key === 'a' || e.key === 'A') sendInput(1);
       if (e.key === 'd' || e.key === 'D') sendInput(-1);
+      if (e.key === 'Shift') {
+        if (rocketTimer != null) return;
+        rocketTimer = window.setTimeout(() => {
+          rocketTimer = null;
+          physicsRef.current?.igniteRocketsForPlayer('local');
+          physicsRef.current?.setRocketHold('local', true);
+        }, 500);
+      }
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.key === 'a' || e.key === 'A' || e.key === 'd' || e.key === 'D') sendInput(0);
+      if (e.key === 'Shift') {
+        if (rocketTimer != null) {
+          window.clearTimeout(rocketTimer);
+          rocketTimer = null;
+        }
+        physicsRef.current?.setRocketHold('local', false);
+      }
     };
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
@@ -492,6 +508,7 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
         case '4': newBlock = 'spike'; break;
         case '5': newBlock = 'gray'; break;
         case '6': newBlock = 'tnt'; break;
+        case '7': newBlock = 'rocket'; break;
       }
       
       if (newBlock) {
@@ -576,6 +593,12 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
               onClick={() => setSelectedBlock('tnt')}
             >
               TNT ({getBlockCount('tnt')})
+            </button>
+            <button 
+              className={selectedBlock === 'rocket' ? 'active' : ''}
+              onClick={() => setSelectedBlock('rocket')}
+            >
+              Rocket ({getBlockCount('rocket')})
             </button>
           </div>
           

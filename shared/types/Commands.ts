@@ -25,7 +25,8 @@ export type GameCommand =
   | ReadyCommand
   | SpawnBoxCommand
   | PlayerInitCommand
-  | WheelInputCommand;
+  | WheelInputCommand
+  | RocketHoldCommand;
 
 export interface DeployCommand {
   type: 'deploy';
@@ -57,6 +58,12 @@ export interface WheelInputCommand {
   type: 'wheel-input';
   playerId: string;
   value: number; // -1 = reverse (D), 0 = stop, +1 = forward (A)
+}
+
+export interface RocketHoldCommand {
+  type: 'rocket-hold';
+  playerId: string;
+  value: boolean; // true = hold (ignite after delay), false = release (stop)
 }
 
 /**

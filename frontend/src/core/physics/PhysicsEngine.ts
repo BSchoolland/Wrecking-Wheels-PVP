@@ -30,6 +30,7 @@ export class PhysicsEngine {
   private coreDeathTimes: Map<string, number> = new Map();
   private wheelInput: Map<string, number> = new Map();
   private botPlayers: Set<string> = new Set();
+  private rocketHold: Map<string, boolean> = new Map();
 
   constructor() {
     // Create Matter.js engine
@@ -234,6 +235,13 @@ export class PhysicsEngine {
           let input = this.wheelInput.get(ownerId) || 0;
           if (!this.wheelInput.has(ownerId) && this.botPlayers.has(ownerId)) input = 1; // bots drive forward by default
           (body as unknown as { currentWheelInput?: number }).currentWheelInput = input;
+        }
+        // Apply rocket hold state: if holding and activated, mark thrusting
+        if (ownerId && body.label?.endsWith('-rocket')) {
+          const hold = this.rocketHold.get(ownerId) || false;
+          if (!hold) {
+            (body as unknown as { rocketThrusting?: boolean }).rocketThrusting = false;
+          }
         }
       }
 
@@ -444,5 +452,20 @@ export class PhysicsEngine {
  
   public setBot(playerId: string, isBot: boolean): void {
     if (isBot) this.botPlayers.add(playerId); else this.botPlayers.delete(playerId);
+  }
+
+  public igniteRocketsForPlayer(playerId: string): void {
+    const bodies = Matter.Composite.allBodies(this.world);
+    bodies.forEach(b => {
+      const owner = (b as unknown as { ownerId?: string }).ownerId;
+      const label = (b as unknown as { label?: string }).label || '';
+      if (owner === playerId && label.endsWith('-rocket')) {
+        (b as unknown as { rocketIgniteAt?: number }).rocketIgniteAt = Date.now();
+      }
+    });
+  }
+
+  public setRocketHold(playerId: string, value: boolean): void {
+    if (value) this.rocketHold.set(playerId, true); else this.rocketHold.delete(playerId);
   }
 }

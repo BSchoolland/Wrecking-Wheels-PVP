@@ -5,7 +5,7 @@
 import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
 import { Renderer } from '@/rendering/Renderer';
 import { NetworkManager, NetworkRole } from '@/core/networking/NetworkManager';
-import type { GameCommand, ContraptionData, UIState, GameEvent, WheelInputCommand, PlayerInitCommand } from '@shared/types/Commands';
+import type { GameCommand, ContraptionData, UIState, GameEvent, WheelInputCommand, PlayerInitCommand, RocketHoldCommand } from '@shared/types/Commands';
 import type { GameState } from '@shared/types/GameState';
 import type * as Matter from 'matter-js';
 import { Contraption, blockFromData } from '@/game/contraptions';
@@ -125,6 +125,8 @@ export class NetworkedGame {
 
   // Host-side: schedule wheel input changes with a fixed delay for fairness
   private pendingWheelInputs: Map<string, { value: number; activateAt: number }> = new Map();
+  // Host-side: schedule rocket hold activation with fixed delay while held
+  private pendingRocketHolds: Map<string, { value: boolean; activateAt: number }> = new Map();
 
   constructor(config: NetworkedGameConfig) {
     this.canvas = config.canvas;
@@ -215,6 +217,32 @@ export class NetworkedGame {
       if ((e.key === 'a' || e.key === 'A' || e.key === 'd' || e.key === 'D') && currentInput !== 0) {
         this.renderer.effects.startWheelGlow(this.playerId);
       }
+      if (e.key === 'Shift') {
+        const delay = 500;
+        if (this.role === 'host') {
+          this.pendingRocketHolds.set(this.playerId, { value: true, activateAt: Date.now() + delay });
+        } else {
+          const cmd: RocketHoldCommand = { type: 'rocket-hold', playerId: this.playerId, value: true };
+          this.network.sendCommand(cmd as unknown as GameCommand);
+        }
+      }
+    });
+    window.addEventListener('keyup', (e) => {
+      if (e.key === 'a' || e.key === 'A') sendInput(0);
+      if (e.key === 'd' || e.key === 'D') sendInput(0);
+      if (e.key === 'a' || e.key === 'A' || e.key === 'd' || e.key === 'D') {
+        this.renderer.effects.stopWheelGlow(this.playerId);
+      }
+      if (e.key === 'Shift') {
+        if (this.role === 'host') {
+          // immediate stop
+          this.pendingRocketHolds.delete(this.playerId);
+          this.physics?.setRocketHold(this.playerId, false);
+        } else {
+          const cmd: RocketHoldCommand = { type: 'rocket-hold', playerId: this.playerId, value: false };
+          this.network.sendCommand(cmd as unknown as GameCommand);
+        }
+      }
     });
     window.addEventListener('keyup', (e) => {
       if (e.key === 'a' || e.key === 'A') sendInput(0);
@@ -293,6 +321,21 @@ export class NetworkedGame {
             value: (command as WheelInputCommand).value,
             activateAt,
           });
+        }
+        break;
+      case 'rocket-hold':
+        {
+          const now = Date.now();
+          const oneWay = this.network.getEstimatedOneWayMs ? (this.network.getEstimatedOneWayMs() || 0) : 0;
+          const interp = this.interpolationDelay;
+          const activateAt = Math.max(now, now + 500 - oneWay - interp);
+          const c = command as RocketHoldCommand;
+          if (c.value) {
+            this.pendingRocketHolds.set(c.playerId, { value: true, activateAt });
+          } else {
+            this.pendingRocketHolds.delete(c.playerId);
+            this.physics?.setRocketHold(c.playerId, false);
+          }
         }
         break;
       case 'spawn-box':
@@ -573,6 +616,20 @@ export class NetworkedGame {
         }
       });
       if (toDelete.length) toDelete.forEach(id => this.pendingWheelInputs.delete(id));
+    }
+
+    // Host: ignite rockets after delay
+    if (this.role === 'host' && this.physics && this.pendingRocketHolds.size > 0) {
+      const toDelete: string[] = [];
+      this.pendingRocketHolds.forEach((pending, playerId) => {
+        if (pending.activateAt <= now) {
+          console.log('igniting rockets for player', playerId);
+          this.physics!.igniteRocketsForPlayer(playerId);
+          this.physics!.setRocketHold(playerId, true);
+          toDelete.push(playerId);
+        }
+      });
+      if (toDelete.length) toDelete.forEach(id => this.pendingRocketHolds.delete(id));
     }
 
     // No periodic resource updates
