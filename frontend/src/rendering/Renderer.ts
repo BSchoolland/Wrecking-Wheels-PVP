@@ -14,10 +14,6 @@ import { CONTRAPTION_DEBUG } from '@/game/contraptions';
 // Camera tuning constants (no magic numbers)
 const CAMERA_SMOOTHING = 0.02; // 0-1, higher is snappier
 const CAMERA_DEADZONE_PX = 30; // pixels from screen center before camera moves
-const ZOOM_SMOOTHING = 0.08; // 0-1, higher is snappier
-const ZOOM_OUT_SPEED_FULL = 450; // world units/sec at which we fully zoom out
-const ZOOM_OUT_MIN_FACTOR = 0.7; // min zoom = baseZoom * factor (zoomed out)
-const ZOOM_IN_MAX_FACTOR = 1.05; // max zoom = baseZoom * factor (slightly closer)
 
 export class Renderer {
   private canvas: HTMLCanvasElement;
@@ -161,7 +157,7 @@ export class Renderer {
     }
   }
 
-  private updateBattleCamera(bodies: Matter.Body[], now: number, deltaTime: number): void {
+  private updateBattleCamera(bodies: Matter.Body[], now: number): void {
     if (!this.myPlayerId) return;
     let sumX = 0;
     let sumY = 0;
@@ -230,7 +226,7 @@ export class Renderer {
     }
 
     // Focus camera on my contraption (smooth follow with deadzone and auto-zoom)
-    this.updateBattleCamera(bodies, now, deltaTime);
+    this.updateBattleCamera(bodies, now);
 
     this.clear();
     this.setupCamera();

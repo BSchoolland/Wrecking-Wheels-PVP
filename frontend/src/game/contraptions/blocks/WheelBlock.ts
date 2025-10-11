@@ -75,7 +75,7 @@ export class WheelBlock extends BaseBlock {
       }
     };
     
-    // Connect wheel to attachment face with revolute constraint (free spi3nning)
+    // Connect wheel to attachment face with revolute constraint (free spinning)
     const axle = Matter.Constraint.create({
       bodyA: attachmentFace,
       bodyB: wheel,

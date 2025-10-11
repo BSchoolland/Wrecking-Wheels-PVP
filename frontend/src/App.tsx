@@ -7,8 +7,6 @@ import { NetworkedGame } from '@/game/NetworkedGame';
 import { ContraptionBuilder } from '@/ui/components/ContraptionBuilder';
 // Decks removed in arena mode
 import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
-import { createBlock } from '@/game/contraptions';
-import type { BlockType } from '@/game/contraptions';
 import './App.css';
 
 const initializeDefaults = async () => {
@@ -67,72 +65,6 @@ function App() {
       setRole('client');
       setView('lobby');
     }
-  };
-
-  const resolveContraptionById = (id: string): ContraptionSaveData | null => {
-    try {
-      const raw = localStorage.getItem(`contraption-${id}`);
-      if (!raw) return null;
-      return JSON.parse(raw);
-    } catch {
-      return null;
-    }
-  };
-
-  const calculateCost = (contraption: ContraptionSaveData): { energy: number } => {
-    const totalEnergy = contraption.blocks.reduce((sum, b) => {
-      if (b.energyCost !== undefined) return sum + b.energyCost;
-      const block = createBlock(b.type as BlockType, 0, 0);
-      return sum + block.energyCost;
-    }, 0);
-    return {
-      energy: Math.ceil(Number(totalEnergy.toFixed(2))),
-    };
-  };
-
-  const calculatePlacementTime = (contraption: ContraptionSaveData): number => {
-    const blockCount = contraption.blocks.length;
-    return (500 + blockCount * 50) / 1000; // Convert to seconds
-  };
-
-  const renderContraptionPreview = (contraption: ContraptionSaveData): JSX.Element => {
-    if (!contraption.blocks || contraption.blocks.length === 0) {
-      return <div className="preview-empty">No blocks</div>;
-    }
-
-    const blocks = contraption.blocks;
-    const minX = Math.min(...blocks.map(b => b.gridX));
-    const maxX = Math.max(...blocks.map(b => b.gridX));
-    const minY = Math.min(...blocks.map(b => b.gridY));
-    const maxY = Math.max(...blocks.map(b => b.gridY));
-    
-    const width = maxX - minX + 1;
-    const height = maxY - minY + 1;
-    const cellSize = 12;
-
-    return (
-      <svg width={width * cellSize} height={height * cellSize} className="contraption-preview-svg">
-        {blocks.map((block, idx) => {
-          const x = (block.gridX - minX) * cellSize;
-          const y = (block.gridY - minY) * cellSize;
-          const colors: Record<string, string> = {
-            core: '#f39c12',
-            simple: '#2196f3',
-            gray: '#7f8c8d',
-            wheel: '#34495e',
-            spike: '#e74c3c',
-            tnt: '#e67e22',
-          };
-          const color = colors[block.type] || '#bdc3c7';
-          
-          return block.type === 'wheel' ? (
-            <circle key={idx} cx={x + cellSize/2} cy={y + cellSize/2} r={cellSize/2 - 1} fill={color} />
-          ) : (
-            <rect key={idx} x={x + 1} y={y + 1} width={cellSize - 2} height={cellSize - 2} fill={color} />
-          );
-        })}
-      </svg>
-    );
   };
 
   const startGame = () => {
@@ -230,7 +162,7 @@ function App() {
                   if (!key || !key.startsWith('contraption-')) continue;
                   const raw = localStorage.getItem(key);
                   if (!raw) continue;
-                  try { items.push(JSON.parse(raw)); } catch {}
+                  try { items.push(JSON.parse(raw)); } catch { /* ignore parse errors */ }
                 }
                 if (items.length === 0) return <p className="no-contraptions">No saved contraptions. Create one in the builder.</p>;
                 return items.map((data) => (

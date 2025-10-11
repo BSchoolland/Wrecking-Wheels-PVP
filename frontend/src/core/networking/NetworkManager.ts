@@ -232,7 +232,7 @@ export class NetworkManager {
         // Start periodic pings over reliable channel
         if (this.pingIntervalId) window.clearInterval(this.pingIntervalId);
         this.pingIntervalId = window.setInterval(() => {
-          try { this.peerConnection?.sendReliableInternal({ type: 'ping', payload: { t: performance.now() } }); } catch (_) {}
+          try { this.peerConnection?.sendReliableInternal({ type: 'ping', payload: { t: performance.now() } }); } catch { /* ignore send errors */ }
         }, 1000);
       },
       onDisconnect: () => {
@@ -296,7 +296,7 @@ export class NetworkManager {
           this.onConnected();
           if (this.pingIntervalId) window.clearInterval(this.pingIntervalId);
           this.pingIntervalId = window.setInterval(() => {
-            try { this.peerConnection?.sendReliableInternal({ type: 'ping', payload: { t: performance.now() } }); } catch (_) {}
+            try { this.peerConnection?.sendReliableInternal({ type: 'ping', payload: { t: performance.now() } }); } catch { /* ignore send errors */ }
           }, 1000);
         },
         onDisconnect: () => {

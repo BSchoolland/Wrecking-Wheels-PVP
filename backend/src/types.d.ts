@@ -1,33 +1,33 @@
 declare module 'express' {
   export interface Request {
-    body: any;
-    params: any;
+    body: unknown;
+    params: unknown;
   }
 
   export interface Response {
-    json(data: any): Response;
+    json(data: unknown): Response;
     status(code: number): Response;
     sendFile(path: string): Response;
   }
 
   const expressModule: {
-    (): any;
-    json(): any;
-    static(root: string): any;
-    Router(): any;
+    (): unknown;
+    json(): unknown;
+    static(root: string): unknown;
+    Router(): unknown;
   } & typeof Request & typeof Response;
 
   export = expressModule;
 }
 
 declare module 'cors' {
-  const corsModule: any;
+  const corsModule: unknown;
   export = corsModule;
 }
 
 declare module 'ws' {
   export class WebSocketServer {
-    constructor(options: any);
+    constructor(options: unknown);
     on(event: 'connection', listener: (ws: WebSocket) => void): this;
   }
 

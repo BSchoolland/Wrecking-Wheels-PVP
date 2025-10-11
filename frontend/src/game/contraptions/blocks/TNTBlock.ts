@@ -8,7 +8,7 @@ import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 
 export class TNTBlock extends BaseBlock {
   constructor(id: string, gridX: number, gridY: number) {
-    super(id, 'tnt' as any, gridX, gridY, 25);
+    super(id, 'tnt', gridX, gridY, 25);
     this.damage = 0;
     this.knockback = 0;
     this.fragile = true;
