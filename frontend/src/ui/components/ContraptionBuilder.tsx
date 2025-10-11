@@ -5,6 +5,7 @@
 import { useState, useRef, useEffect } from 'react';
 import Matter from 'matter-js';
 import { Contraption, BlockType, createBlock, blockFromData } from '@/game/contraptions';
+import { BLOCK_METADATA, BLOCKS_ORDER } from '@/game/contraptions';
 import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
 import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
 import { InputController } from '@/game/input/InputSystem';
@@ -466,14 +467,11 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
       }
       
       let newBlock: BlockType | null = null;
-      switch (e.key) {
-        case '1': newBlock = 'core'; break;
-        case '2': newBlock = 'simple'; break;
-        case '3': newBlock = 'wheel'; break;
-        case '4': newBlock = 'spike'; break;
-        case '5': newBlock = 'gray'; break;
-        case '6': newBlock = 'tnt'; break;
-        case '7': newBlock = 'rocket'; break;
+      for (const type of BLOCKS_ORDER) {
+        if (BLOCK_METADATA[type].key.toLowerCase() === e.key.toLowerCase()) {
+          newBlock = type;
+          break;
+        }
       }
       
       if (newBlock) {
@@ -522,49 +520,21 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
       {!isTesting ? (
         <>
           <div className="builder-palette">
-            <button 
-              className={`${selectedBlock === 'core' ? 'active' : ''} ${isCoreDisabled ? 'disabled' : ''}`}
-              onClick={() => !isCoreDisabled && setSelectedBlock('core')}
-              disabled={isCoreDisabled}
-            >
-              Core ({getBlockCount('core')})
-            </button>
-            <button 
-              className={selectedBlock === 'simple' ? 'active' : ''}
-              onClick={() => setSelectedBlock('simple')}
-            >
-              Simple ({getBlockCount('simple')})
-            </button>
-            <button 
-              className={selectedBlock === 'wheel' ? 'active' : ''}
-              onClick={() => setSelectedBlock('wheel')}
-            >
-              Wheel ({getBlockCount('wheel')})
-            </button>
-            <button 
-              className={selectedBlock === 'spike' ? 'active' : ''}
-              onClick={() => setSelectedBlock('spike')}
-            >
-              Spike ({getBlockCount('spike')})
-            </button>
-            <button 
-              className={selectedBlock === 'gray' ? 'active' : ''}
-              onClick={() => setSelectedBlock('gray')}
-            >
-              Gray ({getBlockCount('gray')})
-            </button>
-            <button 
-              className={selectedBlock === 'tnt' ? 'active' : ''}
-              onClick={() => setSelectedBlock('tnt')}
-            >
-              TNT ({getBlockCount('tnt')})
-            </button>
-            <button 
-              className={selectedBlock === 'rocket' ? 'active' : ''}
-              onClick={() => setSelectedBlock('rocket')}
-            >
-              Rocket ({getBlockCount('rocket')})
-            </button>
+            {BLOCKS_ORDER.map((type) => {
+              const meta = BLOCK_METADATA[type];
+              const disabled = type === 'core' && isCoreDisabled;
+              return (
+                <button
+                  key={type}
+                  className={`${selectedBlock === type ? 'active' : ''} ${disabled ? 'disabled' : ''}`}
+                  onClick={() => !disabled && setSelectedBlock(type)}
+                  disabled={disabled}
+                  title={`${meta.label} [${meta.key}]`}
+                >
+                  {meta.label} ({getBlockCount(type)})
+                </button>
+              );
+            })}
           </div>
           
           <div style={{ position: 'relative', display: 'inline-block' }}>

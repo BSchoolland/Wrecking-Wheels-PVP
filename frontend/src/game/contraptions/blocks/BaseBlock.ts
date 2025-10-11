@@ -4,8 +4,7 @@
 
 import Matter from 'matter-js';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
-
-export type BlockType = 'core' | 'simple' | 'wheel' | 'spike' | 'gray' | 'tnt' | 'rocket';
+import type { BlockType } from '@/game/contraptions';
 export type AttachmentDirection = 'top' | 'right' | 'bottom' | 'left';
 export type DamageType = 'sharp' | 'blunt' | 'blast';
 
@@ -376,6 +375,18 @@ export abstract class BaseBlock {
       energyCost: this.energyCost,
       rotation: this.rotation,
     };
+  }
+
+  loadFromData(data: BlockData): void {
+    if (typeof data.maxHealth === 'number') this.maxHealth = data.maxHealth;
+    if (typeof data.health === 'number') this.health = data.health;
+    if (typeof data.stiffness === 'number') this.stiffness = data.stiffness;
+    if (typeof data.damage === 'number') this.damage = data.damage;
+    if (typeof data.knockback === 'number') this.knockback = data.knockback;
+    if (typeof data.fragile === 'boolean') this.fragile = data.fragile;
+    if (typeof data.materialCost === 'number') this.materialCost = data.materialCost;
+    if (typeof data.energyCost === 'number') this.energyCost = data.energyCost;
+    if (typeof data.rotation === 'number') this.rotation = data.rotation;
   }
 }
 
