@@ -14,7 +14,15 @@ export interface ContraptionSaveData {
   direction?: number; // 1 = right (default), -1 = left (mirrored)
   team?: string; // Team identifier for friendly fire prevention
   isBot?: boolean;
-}
+  }
+export let CONTRAPTION_DEBUG = false;
+export function setContraptionDebug(value: boolean) { CONTRAPTION_DEBUG = value; }
+
+export let CONTRAPTION_STATIC_DEBUG = false;
+export function setContraptionStaticDebug(value: boolean) { CONTRAPTION_STATIC_DEBUG = value; }
+
+type ConstraintRender = { visible?: boolean; lineWidth?: number; strokeStyle?: string };
+type RenderableConstraint = Matter.Constraint & { render?: ConstraintRender };
 
 export class Contraption {
   id: string;
@@ -93,7 +101,7 @@ export class Contraption {
     
     while (queue.length > 0) {
       const current = queue.shift()!;
-      const faces = current.getAttachmentFaces();
+      const faces = current.getRotatedAttachmentFaces();
       
       // Check all adjacent blocks
       const neighbors: Array<{ dx: number; dy: number; face: string; opposite: string }> = [
@@ -109,7 +117,7 @@ export class Contraption {
         const neighbor = this.getBlock(current.gridX + dx, current.gridY + dy);
         const key = `${current.gridX + dx},${current.gridY + dy}`;
         
-        if (neighbor && neighbor.health > 0 && !connected.has(key) && neighbor.getAttachmentFaces().includes(opposite as AttachmentDirection)) {
+        if (neighbor && neighbor.health > 0 && !connected.has(key) && neighbor.getRotatedAttachmentFaces().includes(opposite as AttachmentDirection)) {
           connected.add(key);
           queue.push(neighbor);
         }
@@ -159,6 +167,31 @@ export class Contraption {
         (body as unknown as { onCollision?: (myBody: Matter.Body, otherBody: Matter.Body) => void }).onCollision =
           (myBody: Matter.Body, otherBody: Matter.Body) => block.onCollision(myBody, otherBody);
       });
+
+      // Apply block rotation: rotate all bodies around the block origin (worldX, worldY)
+      const rotation = (block as unknown as { rotation?: number }).rotation || 0;
+      // When mirroring (direction = -1), blocks rotated by 1 or 3 steps should mirror in X, not Y.
+      // Achieve this by negating the rotation angle for odd 90° steps.
+      let effectiveRotation = rotation;
+      if (this.direction === -1 && rotation) {
+        const step = Math.PI / 2;
+        const twoPi = Math.PI * 2;
+        const r = ((rotation % twoPi) + twoPi) % twoPi;
+        const steps = Math.round(r / step) % 4;
+        if (steps % 2 === 1) effectiveRotation = -rotation;
+      }
+      if (effectiveRotation) {
+        const cos = Math.cos(effectiveRotation);
+        const sin = Math.sin(effectiveRotation);
+        result.bodies.forEach(body => {
+          const dx = body.position.x - worldX;
+          const dy = body.position.y - worldY;
+          const rx = dx * cos - dy * sin;
+          const ry = dx * sin + dy * cos;
+          Matter.Body.setPosition(body, { x: worldX + rx, y: worldY + ry });
+          Matter.Body.setAngle(body, (body.angle || 0) + effectiveRotation);
+        });
+      }
       
       bodies.push(...result.bodies);
       constraints.push(...result.constraints);
@@ -170,12 +203,12 @@ export class Contraption {
       const blockBody = bodyMap.get(`${block.gridX},${block.gridY}`);
       if (!blockBody) return;
       
-      const faces = block.getAttachmentFaces();
+      const faces = block.getRotatedAttachmentFaces();
       
       // Check right neighbor
       if (faces.includes('right')) {
         const neighbor = this.getBlock(block.gridX + 1, block.gridY);
-        if (neighbor && neighbor.getAttachmentFaces().includes('left')) {
+        if (neighbor && neighbor.getRotatedAttachmentFaces().includes('left')) {
           const neighborBody = bodyMap.get(`${neighbor.gridX},${neighbor.gridY}`);
           if (neighborBody) {
             const connectionConstraints = block.createConnectionConstraints('right', blockBody, neighborBody, neighbor, this.direction);
@@ -187,7 +220,7 @@ export class Contraption {
       // Check bottom neighbor
       if (faces.includes('bottom')) {
         const neighbor = this.getBlock(block.gridX, block.gridY + 1);
-        if (neighbor && neighbor.getAttachmentFaces().includes('top')) {
+        if (neighbor && neighbor.getRotatedAttachmentFaces().includes('top')) {
           const neighborBody = bodyMap.get(`${neighbor.gridX},${neighbor.gridY}`);
           if (neighborBody) {
             const connectionConstraints = block.createConnectionConstraints('bottom', blockBody, neighborBody, neighbor, this.direction);
@@ -197,6 +230,21 @@ export class Contraption {
       }
     });
     
+    if (CONTRAPTION_DEBUG) {
+      for (const c of constraints as RenderableConstraint[]) {
+        c.render = c.render || {};
+        c.render.visible = true;
+        c.render.lineWidth = c.render.lineWidth ?? 2;
+        c.render.strokeStyle = c.render.strokeStyle ?? '#00ffff';
+      }
+    }
+
+    if (CONTRAPTION_STATIC_DEBUG) {
+      for (const b of bodies) {
+        Matter.Body.setStatic(b, true);
+      }
+    }
+
     return { bodies, constraints };
   }
   

@@ -28,6 +28,7 @@ export interface BlockData {
   fragile?: boolean;
   materialCost?: number;
   energyCost?: number;
+  rotation?: number;
 }
 
 export interface PhysicsSpawnResult {
@@ -49,6 +50,8 @@ export abstract class BaseBlock {
   fragile: boolean;
   materialCost: number;
   energyCost: number;
+  rotation: number;
+  ignoreRotation: boolean;
   
   constructor(id: string, type: BlockType, gridX: number, gridY: number, maxHealth: number = 100) {
     this.id = id;
@@ -63,6 +66,8 @@ export abstract class BaseBlock {
     this.fragile = false;
     this.materialCost = 0;
     this.energyCost = 0;
+    this.rotation = 0;
+    this.ignoreRotation = false;
   }
   
   /**
@@ -230,7 +235,35 @@ export abstract class BaseBlock {
       };
     }
   }
+
+  protected getRotationSteps(): number {
+    const step = Math.PI / 2;
+    const twoPi = Math.PI * 2;
+    const r = ((this.rotation % twoPi) + twoPi) % twoPi;
+    return Math.round(r / step) % 4;
+  }
+
+  getRotatedAttachmentFaces(): AttachmentDirection[] {
+    if (this.ignoreRotation) return this.getAttachmentFaces();
+    const steps = this.getRotationSteps();
+    if (steps === 0) return this.getAttachmentFaces();
+    const order: AttachmentDirection[] = ['top', 'right', 'bottom', 'left'];
+    return this.getAttachmentFaces().map(f => order[(order.indexOf(f) + steps + 4) % 4]);
+  }
+
+  private inverseRotateDirection(dir: AttachmentDirection, steps: number): AttachmentDirection {
+    const order: AttachmentDirection[] = ['top', 'right', 'bottom', 'left'];
+    return order[(order.indexOf(dir) - steps + 400) % 4];
+  }
   
+  protected rotatePointBySteps(point: Matter.Vector, steps: number): Matter.Vector {
+    const s = ((steps % 4) + 4) % 4;
+    if (s === 0) return { x: point.x, y: point.y };
+    if (s === 1) return { x: -point.y, y: point.x };
+    if (s === 2) return { x: -point.x, y: -point.y };
+    return { x: point.y, y: -point.x }; // s === 3
+  }
+      
   /**
    * Create constraints to connect this block to a neighbor
    * @param direction Which direction the neighbor is in
@@ -248,24 +281,64 @@ export abstract class BaseBlock {
   ): Matter.Constraint[] {
     const constraints: Matter.Constraint[] = [];
     
-    // Get attachment points for this block and neighbor
-    const myPoints = this.getAttachmentPoints(direction, facingDirection);
-    
-    // Determine opposite face for neighbor
+    // Determine each block's local faces accounting for rotation
+    const mySteps = this.ignoreRotation ? 0 : this.getRotationSteps();
     const oppositeFace: Record<AttachmentDirection, AttachmentDirection> = {
       'top': 'bottom',
       'right': 'left',
       'bottom': 'top',
       'left': 'right'
     };
-    const neighborPoints = neighbor?.getAttachmentPoints(oppositeFace[direction], facingDirection) ?? myPoints;
+    const neighborSteps = neighbor && !neighbor.ignoreRotation ? neighbor.getRotationSteps() : 0;
+
+    const myLocalFace = this.inverseRotateDirection(direction, mySteps);
+    const neighborWorldFace = oppositeFace[direction];
+    const neighborLocalFace = neighbor ? neighbor.inverseRotateDirection(neighborWorldFace, neighborSteps) : neighborWorldFace;
+
+    const myPoints = this.getAttachmentPoints(myLocalFace, facingDirection);
+    const neighborPoints = neighbor?.getAttachmentPoints(neighborLocalFace, facingDirection) ?? myPoints;
     
-    // Create two corner constraints
+    // Rotate points by each block's rotation steps
+    let myA = this.rotatePointBySteps(myPoints.pointA, mySteps);
+    let myB = this.rotatePointBySteps(myPoints.pointB, mySteps);
+    let neighborA = neighbor ? neighbor.rotatePointBySteps(neighborPoints.pointA, neighborSteps) : this.rotatePointBySteps(neighborPoints.pointA, neighborSteps);
+    let neighborB = neighbor ? neighbor.rotatePointBySteps(neighborPoints.pointB, neighborSteps) : this.rotatePointBySteps(neighborPoints.pointB, neighborSteps);
+
+    // If mirrored, flip local Y based on the starting face orientation:
+    // - For vertical faces (left/right), flip on odd steps (1 or 3)
+    // - For horizontal faces (top/bottom), flip only on step 2
+    const myFaceIsVertical = (myLocalFace === 'left' || myLocalFace === 'right');
+    const neighborFaceIsVertical = (neighborLocalFace === 'left' || neighborLocalFace === 'right');
+    if (facingDirection === -1) {
+      const shouldFlipMy = myFaceIsVertical ? (mySteps % 2 === 1) : (mySteps % 4 === 2);
+      if (shouldFlipMy) {
+        myA = { x: myA.x, y: -myA.y };
+        myB = { x: myB.x, y: -myB.y };
+      }
+      const shouldFlipNeighbor = neighborFaceIsVertical ? (neighborSteps % 2 === 1) : (neighborSteps % 4 === 2);
+      if (shouldFlipNeighbor) {
+        neighborA = { x: neighborA.x, y: -neighborA.y };
+        neighborB = { x: neighborB.x, y: -neighborB.y };
+      }
+    }
+
+    // Swap endpoints to keep consistent end mapping.
+    // Vertical faces (left/right): swap on steps 1 and 2
+    // Horizontal faces (top/bottom): swap on steps 2 and 3
+    const baseSwapMy = (mySteps === 2) || (myFaceIsVertical && mySteps === 1) || (!myFaceIsVertical && mySteps === 3);
+    const baseSwapNeighbor = (neighborSteps === 2) || (neighborFaceIsVertical && neighborSteps === 1) || (!neighborFaceIsVertical && neighborSteps === 3);
+    const invertMy = (facingDirection === -1) && (mySteps % 2 === 1);
+    const invertNeighbor = (facingDirection === -1) && (neighborSteps % 2 === 1);
+    const doSwapMy = invertMy ? !baseSwapMy : baseSwapMy;
+    const doSwapNeighbor = invertNeighbor ? !baseSwapNeighbor : baseSwapNeighbor;
+    const [finalMyA, finalMyB] = doSwapMy ? [myB, myA] : [myA, myB];
+    const [finalNeighborA, finalNeighborB] = doSwapNeighbor ? [neighborB, neighborA] : [neighborA, neighborB];
+    
     constraints.push(Matter.Constraint.create({
       bodyA: myBody,
       bodyB: neighborBody,
-      pointA: myPoints.pointA,
-      pointB: neighborPoints.pointA,
+      pointA: finalMyA,
+      pointB: finalNeighborA,
       length: 0,
       stiffness: this.stiffness,
       damping: BUILDER_CONSTANTS.CONSTRAINT_DAMPING,
@@ -274,8 +347,8 @@ export abstract class BaseBlock {
     constraints.push(Matter.Constraint.create({
       bodyA: myBody,
       bodyB: neighborBody,
-      pointA: myPoints.pointB,
-      pointB: neighborPoints.pointB,
+      pointA: finalMyB,
+      pointB: finalNeighborB,
       length: 0,
       stiffness: this.stiffness,
       damping: BUILDER_CONSTANTS.CONSTRAINT_DAMPING,
@@ -301,6 +374,7 @@ export abstract class BaseBlock {
       fragile: this.fragile,
       materialCost: this.materialCost,
       energyCost: this.energyCost,
+      rotation: this.rotation,
     };
   }
 }

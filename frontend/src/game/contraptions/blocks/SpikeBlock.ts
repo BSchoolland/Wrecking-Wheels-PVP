@@ -42,8 +42,10 @@ export class SpikeBlock extends BaseBlock {
     const halfSize = size / 2;
     const dir = direction ?? 1;
     
-    // Shift slightly left so attachment aligns more with block face
+    // Adjust offset based on rotation to align the attachment face after rotation
+
     const baseX = worldX + SpikeBlock.BODY_OFFSET * dir;
+    const baseY = worldY;
     
     // Local triangle (attachment face on the left when dir=1, mirrored when dir=-1)
     const local = [
@@ -51,11 +53,11 @@ export class SpikeBlock extends BaseBlock {
       { x: -halfSize, y: halfSize },  // left-bottom
       { x: halfSize, y: 0 },          // tip (right when dir=1, left when dir=-1)
     ];
-    const vertices = local.map(p => ({ x: baseX + p.x * dir, y: worldY + p.y }));
+    const vertices = local.map(p => ({ x: baseX + p.x * dir, y: baseY + p.y }));
     
     const body = Matter.Bodies.fromVertices(
       baseX,
-      worldY,
+      baseY,
       [vertices],
       { 
         label: this.id,

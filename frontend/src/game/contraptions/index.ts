@@ -10,7 +10,7 @@ export { WheelBlock } from './blocks/WheelBlock';
 export { SpikeBlock } from './blocks/SpikeBlock';
 export { GrayBlock } from './blocks/GrayBlock';
 export { TNTBlock } from './blocks/TNTBlock';
-export { Contraption } from './Contraption';
+export { Contraption, setContraptionDebug, CONTRAPTION_DEBUG, setContraptionStaticDebug, CONTRAPTION_STATIC_DEBUG } from './Contraption';
 export type { ContraptionSaveData } from './Contraption';
 
 // Helper to create a block by type
@@ -56,6 +56,7 @@ export function blockFromData(data: BlockData): BaseBlock {
       if (data.damage !== undefined) core.damage = data.damage;
       if (data.knockback !== undefined) core.knockback = data.knockback;
       core.fragile = data.fragile ?? false;
+      if (data.rotation !== undefined) core.rotation = data.rotation;
       return core;
     }
     case 'simple': {
@@ -66,6 +67,7 @@ export function blockFromData(data: BlockData): BaseBlock {
       if (data.damage !== undefined) simple.damage = data.damage;
       if (data.knockback !== undefined) simple.knockback = data.knockback;
       simple.fragile = data.fragile ?? false;
+      if (data.rotation !== undefined) simple.rotation = data.rotation;
       return simple;
     }
     case 'wheel': {
@@ -75,6 +77,7 @@ export function blockFromData(data: BlockData): BaseBlock {
       if (data.damage !== undefined) wheel.damage = data.damage;
       if (data.knockback !== undefined) wheel.knockback = data.knockback;
       wheel.fragile = data.fragile ?? false;
+      if (data.rotation !== undefined) wheel.rotation = data.rotation;
       return wheel;
     }
     case 'spike': {
@@ -85,6 +88,7 @@ export function blockFromData(data: BlockData): BaseBlock {
       if (data.damage !== undefined) spike.damage = data.damage;
       if (data.knockback !== undefined) spike.knockback = data.knockback;
       spike.fragile = data.fragile ?? false;
+      if (data.rotation !== undefined) spike.rotation = data.rotation;
       return spike;
     }
     case 'gray': {
@@ -94,6 +98,7 @@ export function blockFromData(data: BlockData): BaseBlock {
       if (data.damage !== undefined) gray.damage = data.damage;
       if (data.knockback !== undefined) gray.knockback = data.knockback;
       gray.fragile = data.fragile ?? false;
+      if (data.rotation !== undefined) gray.rotation = data.rotation;
       return gray;
     }
     case 'tnt': {
@@ -104,6 +109,7 @@ export function blockFromData(data: BlockData): BaseBlock {
       if (data.damage !== undefined) tnt.damage = data.damage;
       if (data.knockback !== undefined) tnt.knockback = data.knockback;
       tnt.fragile = data.fragile ?? false;
+      if (data.rotation !== undefined) tnt.rotation = data.rotation;
       return tnt;
     }
     default:

@@ -395,6 +395,13 @@ export class PhysicsEngine {
   }
 
   /**
+   * Get all constraints in the world
+   */
+  getAllConstraints(): Matter.Constraint[] {
+    return Matter.Composite.allConstraints(this.world);
+  }
+
+  /**
    * Clear all non-static bodies from the world
    */
   clear(): void {

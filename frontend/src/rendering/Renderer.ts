@@ -9,6 +9,7 @@ import { Camera } from '@/core/Camera';
 import { EffectManager } from './EffectManager';
 import type { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
 import type * as Matter from 'matter-js';
+import { CONTRAPTION_DEBUG } from '@/game/contraptions';
 
 // Camera tuning constants (no magic numbers)
 const CAMERA_SMOOTHING = 0.02; // 0-1, higher is snappier
@@ -339,6 +340,41 @@ export class Renderer {
     // Render particles and damage numbers
     this.effects.render(this.ctx);
 
+    this.resetCamera();
+  }
+
+  /**
+   * Render constraints as lines for debugging
+   */
+  renderConstraints(constraints: Matter.Constraint[]): void {
+    if (!CONTRAPTION_DEBUG || constraints.length === 0) return;
+    this.setupCamera();
+    this.ctx.strokeStyle = '#00ffff';
+    this.ctx.lineWidth = 4;
+    this.ctx.shadowBlur = 10;
+    this.ctx.shadowColor = 'rgba(0,255,255,0.9)';
+    constraints.forEach(c => {
+      const a = c.bodyA;
+      const b = c.bodyB;
+      if (!a || !b || !c.pointA || !c.pointB) return;
+      const ax = a.position.x + (c.pointA.x || 0);
+      const ay = a.position.y + (c.pointA.y || 0);
+      const bx = b.position.x + (c.pointB.x || 0);
+      const by = b.position.y + (c.pointB.y || 0);
+      this.ctx.beginPath();
+      this.ctx.moveTo(ax, ay);
+      this.ctx.lineTo(bx, by);
+      this.ctx.stroke();
+
+      // Endpoint nodes
+      this.ctx.beginPath();
+      this.ctx.arc(ax, ay, 4, 0, Math.PI * 2);
+      this.ctx.arc(bx, by, 4, 0, Math.PI * 2);
+      this.ctx.fillStyle = '#ffffff';
+      this.ctx.fill();
+      this.ctx.stroke();
+    });
+    this.ctx.shadowBlur = 0;
     this.resetCamera();
   }
 
