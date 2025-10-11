@@ -34,8 +34,8 @@ interface SerializableBody {
   ownerId?: string;
   label?: string;
   // Optional kinematics for better interpolation
-  // velocity?: { x: number; y: number };
-  // angularVelocity?: number;
+  velocity?: { x: number; y: number };
+  angularVelocity?: number;
 }
 
 interface EffectEvent {
@@ -89,7 +89,7 @@ export class NetworkedGame {
   private lastSyncTime = 0;
   private syncInterval = 50; // Send physics updates every 50ms (20 times per second)
   private lastUISyncTime = 0;
-  private uiSyncInterval = 100; // Send UI updates every 100ms (10 times per second)
+  private uiSyncInterval = 200; // Send UI updates every 100ms (10 times per second)
   
   // Effect events to sync (host only)
   private effectEvents: EffectEvent[] = [];
@@ -375,9 +375,9 @@ export class NetworkedGame {
 
     // Update host time offset estimate (EMA) so client can convert to host time
     const recvNow = snapshot._receivedAt || Date.now();
-    const oneWay = this.network.getEstimatedOneWayMs ? (this.network.getEstimatedOneWayMs() || 0) : 0;
-    const estimatedHostNowAtReceive = snapshot.timestamp + oneWay;
-    const offsetEstimate = estimatedHostNowAtReceive - recvNow;
+    // const oneWay = this.network.getEstimatedOneWayMs ? (this.network.getEstimatedOneWayMs() || 0) : 0;
+    // const estimatedHostNowAtReceive = snapshot.timestamp + oneWay;
+    const offsetEstimate = snapshot.timestamp - recvNow;
     this.hostTimeOffsetMs = this.hostTimeOffsetMs === 0
       ? offsetEstimate
       : this.hostTimeOffsetMs + (offsetEstimate - this.hostTimeOffsetMs) * 0.1;
@@ -628,11 +628,65 @@ export class NetworkedGame {
       const hostNow = now + this.hostTimeOffsetMs;
       const renderTime = hostNow - this.interpolationDelay;
       const bodies = this.getInterpolatedBodies(renderTime);
+      // const bodies = this.getLatestSnapshotBodies();
       this.renderer.renderPhysics(bodies as Matter.Body[]);
     }
 
     this.animationFrameId = requestAnimationFrame(this.gameLoop);
   };
+
+  /**
+   * Get latest snapshot bodies without interpolation
+   */
+  private getLatestSnapshotBodies(): Matter.Body[] {
+    if (!this.latestSnapshot) {
+      return Array.from(this.bodies.values());
+    }
+
+    const snapshot = this.latestSnapshot;
+    const result: Matter.Body[] = [];
+    
+    // Simple string -> number hash for deterministic id used by crack rendering
+    const hashId = (s: string): number => {
+      let h = 0;
+      for (let i = 0; i < s.length; i++) {
+        h = ((h << 5) - h) + s.charCodeAt(i);
+        h |= 0;
+      }
+      return Math.abs(h) + 1; // ensure > 0
+    };
+
+    snapshot.bodies.forEach(body => {
+      // Get vertices: use from snapshot if available, otherwise transform cached local vertices
+      let vertices: Array<{ x: number; y: number }>;
+      if (body.vertices) {
+        vertices = body.vertices;
+      } else {
+        const localVerts = this.verticesCache.get(body.id) || [];
+        const cos = Math.cos(body.angle);
+        const sin = Math.sin(body.angle);
+        vertices = localVerts.map(v => ({
+          x: body.position.x + (v.x * cos - v.y * sin),
+          y: body.position.y + (v.x * sin + v.y * cos)
+        }));
+      }
+
+      const fakeBody: Partial<Matter.Body> & { id: number } = {
+        id: hashId(body.id),
+        position: body.position,
+        angle: body.angle,
+        vertices,
+        circleRadius: body.circleRadius,
+        isStatic: body.isStatic,
+        render: body.render,
+      };
+      (fakeBody as unknown as { ownerId?: string }).ownerId = this.ownerCache.get(body.id);
+      (fakeBody as unknown as { label?: string }).label = this.labelCache.get(body.id);
+      result.push(fakeBody as Matter.Body);
+    });
+
+    return result;
+  }
 
   /**
    * Build interpolated Matter-like bodies for rendering on the client
@@ -660,6 +714,10 @@ export class NetworkedGame {
     const timeBetween = next.timestamp - prev.timestamp;
     const timeElapsed = targetTime - prev.timestamp;
     const fraction = timeBetween > 0 ? timeElapsed / timeBetween : 0;
+    // FIXME: The vibe coded time calculations for interpolation are buggy.  They work most of the time, but not always.  I can't be bothered to fix it right now.
+    // console.log('fraction', fraction);
+    // console.log(`Estimated RTT (from host offset): ${Math.round(2 * this.hostTimeOffsetMs)}ms, targetTime: ${targetTime.toFixed(1)}`);
+    // console.log(`prev: ${prev.timestamp}, next: ${next.timestamp}, target: ${targetTime}, diff: ${targetTime - next.timestamp}`);
     const clampedFraction = Math.max(0, Math.min(1, fraction));
   
     // Step 3: Create maps for easy lookup
@@ -722,12 +780,11 @@ export class NetworkedGame {
         };
         
         // Add cached metadata
-        (fakeBody as any).ownerId = this.ownerCache.get(id);
-        (fakeBody as any).label = this.labelCache.get(id);
-        
+        (fakeBody as Partial<Matter.Body> & { id: number; ownerId?: string; label?: string }).ownerId = this.ownerCache.get(id);
+        (fakeBody as Partial<Matter.Body> & { id: number; ownerId?: string; label?: string }).label = this.labelCache.get(id);
+
         result.push(fakeBody as Matter.Body);
       }
-      
       // TODO: Handle bodies only in prev (being destroyed)
       else if (prevBody && !nextBody) {
         // Body is being destroyed - for now, just show it at prev position
@@ -790,4 +847,3 @@ export class NetworkedGame {
     this.interpolationEnabled = enabled;
   }
 }
-

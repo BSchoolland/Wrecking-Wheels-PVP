@@ -83,6 +83,8 @@ export class NetworkManager {
   private pingIntervalId: number | null = null;
   private estimatedOneWayMs: number = 0;
   private bestRttMs: number = Number.POSITIVE_INFINITY;
+  private rttQueue: number[] = []; // New: Queue for recent RTTs
+  private readonly MAX_RTT_SAMPLES = 5; // Average last 5 for stability
 
   constructor(config: NetworkManagerConfig) {
     this.role = config.role;
@@ -212,11 +214,14 @@ export class NetworkManager {
           const t0 = (message.payload as { t: number }).t;
           if (typeof t0 === 'number') {
             const rtt = performance.now() - t0;
-            this.bestRttMs = Math.min(this.bestRttMs, rtt);
-            // EMA toward near-best RTT to reduce asymmetry noise
-            const target = Math.min(rtt, this.bestRttMs * 1.25);
-            const oneWay = target / 2;
-            this.estimatedOneWayMs = this.estimatedOneWayMs ? (this.estimatedOneWayMs * 0.8 + oneWay * 0.2) : oneWay;
+            console.log(`Raw ping RTT sample: ${rtt.toFixed(1)}ms`); // New: Log raw RTTs
+            this.rttQueue.push(rtt);
+            if (this.rttQueue.length > this.MAX_RTT_SAMPLES) {
+              this.rttQueue.shift();
+            }
+            const avgRtt = this.rttQueue.length > 0 ? this.rttQueue.reduce((a, b) => a + b, 0) / this.rttQueue.length : rtt;
+            const oneWay = avgRtt / 2;
+            this.estimatedOneWayMs = this.estimatedOneWayMs ? (this.estimatedOneWayMs * 0.5 + oneWay * 0.5) : oneWay; // Faster EMA
           }
         }
       },
@@ -275,10 +280,14 @@ export class NetworkManager {
             const t0 = (message.payload as { t: number }).t;
             if (typeof t0 === 'number') {
               const rtt = performance.now() - t0;
-              this.bestRttMs = Math.min(this.bestRttMs, rtt);
-              const target = Math.min(rtt, this.bestRttMs * 1.25);
-              const oneWay = target / 2;
-              this.estimatedOneWayMs = this.estimatedOneWayMs ? (this.estimatedOneWayMs * 0.8 + oneWay * 0.2) : oneWay;
+              console.log(`Raw ping RTT sample: ${rtt.toFixed(1)}ms`); // New: Log raw RTTs
+              this.rttQueue.push(rtt);
+              if (this.rttQueue.length > this.MAX_RTT_SAMPLES) {
+                this.rttQueue.shift();
+              }
+              const avgRtt = this.rttQueue.length > 0 ? this.rttQueue.reduce((a, b) => a + b, 0) / this.rttQueue.length : rtt;
+              const oneWay = avgRtt / 2;
+              this.estimatedOneWayMs = this.estimatedOneWayMs ? (this.estimatedOneWayMs * 0.5 + oneWay * 0.5) : oneWay; // Faster EMA
             }
           }
         },
