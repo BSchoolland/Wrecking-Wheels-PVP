@@ -14,6 +14,14 @@ export class GrayBlock extends BaseBlock {
     this.energyCost = 0.4;
   }
   
+  getSpritesheetName(): string | undefined {
+    return 'blocks';
+  }
+
+  getSpriteRow(): number {
+    return 6;
+  }
+  
   getAttachmentFaces(): AttachmentDirection[] {
     return ['top', 'right', 'bottom', 'left'];
   }

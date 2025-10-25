@@ -8,7 +8,7 @@ import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 import { InputRegistry } from '@/game/input/InputSystem';
 
 export class RocketBlock extends BaseBlock {
-  static readonly INPUT_DELAY_MS = 500;
+  static readonly INPUT_DELAY_MS = 250;
   static readonly BODY_WIDTH = BUILDER_CONSTANTS.BLOCK_SIZE;
   static readonly BODY_HEIGHT = BUILDER_CONSTANTS.BLOCK_SIZE;
 
@@ -17,34 +17,52 @@ export class RocketBlock extends BaseBlock {
     this.energyCost = 0.5;
   }
 
+  getSpritesheetName(): string | undefined {
+    return 'blocks';
+  }
+
+  getSpriteRow(): number {
+    return 5;
+  }
+
   getAttachmentFaces(): AttachmentDirection[] {
     // Connects from the right
     return ['right'];
   }
 
   createPhysicsBodies(worldX: number, worldY: number, direction: number = 1): PhysicsSpawnResult {
-    const body = Matter.Bodies.rectangle(
+    // Build a simple compound: rounded rocket body + thin attachment plate on the right (like wheel's attach face)
+    const plateWidth = 4;
+    const main = Matter.Bodies.rectangle(
       worldX,
       worldY,
       RocketBlock.BODY_WIDTH,
       RocketBlock.BODY_HEIGHT,
       {
-        label: `${this.id}-rocket`,
+        chamfer: { radius: 6 },
         render: { fillStyle: '#c62828', strokeStyle: '#000', lineWidth: 2 },
       }
     );
-
-    // Per-body tick: apply thrust if ignited
-    (body as unknown as { onTick?: () => void }).onTick = () => {
-      const anyBody = body as unknown as { rocketIgniteAt?: number; rocketThrusting?: boolean; physics?: { queueForce: (b: Matter.Body, f: Matter.Vector) => void } };
-      const now = Date.now();
-      if (anyBody.rocketIgniteAt && !anyBody.rocketThrusting && now >= anyBody.rocketIgniteAt) {
-        anyBody.rocketThrusting = true;
+    const attachPlate = Matter.Bodies.rectangle(
+      worldX + RocketBlock.BODY_WIDTH / 2 - plateWidth / 2,
+      worldY,
+      plateWidth,
+      RocketBlock.BODY_HEIGHT,
+      {
+        render: { fillStyle: '#795548', strokeStyle: '#000', lineWidth: 2 },
       }
+    );
+    const body = Matter.Body.create({
+      label: `${this.id}-rocket`,
+      parts: [main, attachPlate],
+    });
+
+    // Per-body tick: apply thrust while thrusting flag is true
+    (body as unknown as { onTick?: () => void }).onTick = () => {
+      const anyBody = body as unknown as { rocketThrusting?: boolean; physics?: { queueForce: (b: Matter.Body, f: Matter.Vector) => void } };
       if (anyBody.rocketThrusting) {
-        console.log('rocket thrusting');
         // Forward in facing direction along the local +X axis
-        const thrust = 0.015; // strong push per tick
+        const thrust = 0.005; // strong push per tick
         const cos = Math.cos(body.angle);
         const sin = Math.sin(body.angle);
         const fx = cos * thrust * direction;
@@ -71,7 +89,6 @@ export class RocketBlock extends BaseBlock {
       const physics = ctx.physics;
       if (!physics) return;
       if (phase === 'press') {
-        physics.igniteRocketsForPlayer(ctx.playerId);
         physics.setRocketHold(ctx.playerId, true);
       } else if (phase === 'release') {
         physics.setRocketHold(ctx.playerId, false);

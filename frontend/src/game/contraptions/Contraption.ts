@@ -157,12 +157,25 @@ export class Contraption {
 
       const result = block.createPhysicsBodies(worldX, worldY, this.direction);
       
-      // Tag all bodies with contraption ID, team, and block reference
+      // Tag all bodies with contraption ID, team, block reference, and sprite data
       result.bodies.forEach(body => {
         (body as unknown as { contraptionId?: string }).contraptionId = this.id;
         (body as unknown as { team?: string }).team = this.team;
         (body as unknown as { blockId?: string }).blockId = block.id;
-        (body as unknown as { block?: BaseBlock }).block = block;
+        // Only attach block reference and sprite data to primary body
+        if (body === result.primaryBody) {
+          (body as unknown as { block?: BaseBlock }).block = block;
+          // Attach sprite data for network transmission
+          const sheet = block.getSpritesheetName();
+          if (sheet) {
+            (body as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } }).sprite = {
+              sheet,
+              row: block.getSpriteRow(),
+              offsetX: block.getSpriteOffset().x,
+              offsetY: block.getSpriteOffset().y,
+            };
+          }
+        }
         // Attach generic collision handler for damage/knockback
         (body as unknown as { onCollision?: (myBody: Matter.Body, otherBody: Matter.Body) => void }).onCollision =
           (myBody: Matter.Body, otherBody: Matter.Body) => block.onCollision(myBody, otherBody);

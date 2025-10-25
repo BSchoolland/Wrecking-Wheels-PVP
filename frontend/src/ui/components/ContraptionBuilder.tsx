@@ -10,6 +10,8 @@ import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
 import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
 import { InputController } from '@/game/input/InputSystem';
 import { Renderer } from '@/rendering/Renderer';
+import { BlockRenderer } from '@/rendering/BlockRenderer';
+import { SpriteManager } from '@/rendering/SpriteManager';
 import { getTestSpawnPosition } from '@/game/terrain/MapLoader';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 import './ContraptionBuilder.css';
@@ -266,42 +268,29 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
           Matter.Body.setAngle(body, (body.angle || 0) + rotation);
         });
       }
+      // Attach sprite data to primary body for rendering
+      const sheet = block.getSpritesheetName();
+      if (sheet) {
+        (bodies[0] as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } }).sprite = {
+          sheet,
+          row: block.getSpriteRow(),
+          offsetX: block.getSpriteOffset().x,
+          offsetY: block.getSpriteOffset().y,
+        };
+      }
       Matter.World.add(world, bodies);
       if (constraints.length) Matter.World.add(world, constraints as unknown as Matter.Constraint[]);
     });
 
-    // Render only the contraption bodies (ignore boundaries; none added here)
+    // Render all contraption bodies (sprites or physics bodies)
     const bodiesToRender = Matter.Composite.allBodies(world);
     bodiesToRender.forEach(body => {
-      ctx.save();
-
-      const bodyRender = body.render as { fillStyle?: string; strokeStyle?: string; lineWidth?: number };
-      const fill = bodyRender?.fillStyle || '#888';
-      const stroke = bodyRender?.strokeStyle || '#000';
-      const lineWidth = bodyRender?.lineWidth ?? 2;
-      ctx.fillStyle = fill;
-      ctx.strokeStyle = stroke;
-      ctx.lineWidth = lineWidth;
-
-      const bodyWithCircle = body as Matter.Body & { circleRadius?: number };
-      if (bodyWithCircle.circleRadius) {
-        const r = bodyWithCircle.circleRadius;
-        ctx.beginPath();
-        ctx.arc(body.position.x, body.position.y, r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-      } else if (body.vertices && body.vertices.length) {
-        ctx.beginPath();
-        ctx.moveTo(body.vertices[0].x, body.vertices[0].y);
-        for (let i = 1; i < body.vertices.length; i++) {
-          ctx.lineTo(body.vertices[i].x, body.vertices[i].y);
-        }
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
+      const sprite = (body as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } })?.sprite;
+      if (sprite?.sheet) {
+        BlockRenderer.renderSprite(ctx, body, sprite.sheet, sprite.row, sprite.offsetX, sprite.offsetY);
+      } else {
+        BlockRenderer.renderPhysicsBody(ctx, body);
       }
-
-      ctx.restore();
     });
 
     // Draw selection highlight
@@ -388,6 +377,13 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     }
   }, [contraption, selectedBlock, selectedCell]);
 
+  // Pre-load sprites for builder rendering
+  useEffect(() => {
+    SpriteManager.loadSprites().catch((err) => {
+      console.warn('Failed to load sprites:', err);
+    });
+  }, []);
+
   // Initialize physics/rendering once the test canvas is mounted
   useEffect(() => {
     if (!isTesting) return;
@@ -404,6 +400,11 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     // Identify local player for camera follow and effects
     rendererRef.current.setPlayerId('local');
     
+    // Pre-load sprites (fire and forget - rendering will gracefully degrade if not loaded)
+    SpriteManager.loadSprites().catch((err) => {
+      console.warn('Failed to load sprites:', err);
+    });
+
     // Build contraption physics - spawn a single controllable contraption
     const spawnPos = getTestSpawnPosition();
     const blocks = contraption.getAllBlocks();

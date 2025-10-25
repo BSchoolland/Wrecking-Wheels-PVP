@@ -70,6 +70,30 @@ export abstract class BaseBlock {
   }
   
   /**
+   * Get spritesheet name for this block (undefined = no sprite, use physics body rendering)
+   * Subclasses should override this to define their sprite
+   */
+  getSpritesheetName(): string | undefined {
+    return undefined;
+  }
+
+  /**
+   * Get sprite row index in the spritesheet (represents block variant/type)
+   * Only used if getSpritesheetName() returns a value
+   */
+  getSpriteRow(): number {
+    return 0;
+  }
+
+  /**
+   * Get sprite offset relative to body position (in pixels)
+   * Useful for multi-body blocks where sprite should be offset from the primary body
+   */
+  getSpriteOffset(): { x: number; y: number } {
+    return { x: 0, y: 0 };
+  }
+
+  /**
    * Get which faces this block can attach to neighbors
    */
   abstract getAttachmentFaces(): AttachmentDirection[];

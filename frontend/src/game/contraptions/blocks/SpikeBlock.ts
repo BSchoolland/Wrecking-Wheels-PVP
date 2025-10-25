@@ -17,6 +17,13 @@ export class SpikeBlock extends BaseBlock {
     this.energyCost = 0.5;
   }
 
+  getSpritesheetName(): string | undefined {
+    return 'blocks';
+  }
+
+  getSpriteRow(): number {
+    return 3;
+  }
   
   getAttachmentFaces(): AttachmentDirection[] {
     return ['left'];

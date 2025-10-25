@@ -17,6 +17,21 @@ export class WheelBlock extends BaseBlock {
     super(id, 'wheel', gridX, gridY);
     this.energyCost = 0.5;
   }
+
+  getSpritesheetName(): string | undefined {
+    return 'blocks';
+  }
+
+  getSpriteRow(): number {
+    return 2;
+  }
+  
+  getSpriteOffset(): { x: number; y: number } {
+    // Offset from attachment face (primary body) to wheel position
+    // Wheel is below attachment face by: ATTACHMENT_HEIGHT + WHEEL_RADIUS - ATTACHMENT_HEIGHT/2
+    const offsetY = (WheelBlock.ATTACHMENT_HEIGHT + WheelBlock.WHEEL_RADIUS - WheelBlock.ATTACHMENT_HEIGHT / 2) - 1;
+    return { x: 0, y: offsetY };
+  }
   
   getAttachmentFaces(): AttachmentDirection[] {
     return ['top'];
@@ -60,6 +75,8 @@ export class WheelBlock extends BaseBlock {
         }
       }
     );
+    // Mark wheel as secondary body (only primary attachment face should render sprite)
+    (wheel as unknown as { _isSecondaryBody: boolean })._isSecondaryBody = true;
     // Apply wheel drive based on per-body input set by physics (currentWheelInput)
     (wheel as unknown as { driveDir?: number }).driveDir = direction;
     (wheel as unknown as { onTick?: () => void }).onTick = () => {

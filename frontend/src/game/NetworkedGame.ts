@@ -11,6 +11,7 @@ import type * as Matter from 'matter-js';
 import { Contraption, blockFromData } from '@/game/contraptions';
 import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
 import type { BlockData } from '@/game/contraptions/blocks/BaseBlock';
+import { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
 import { WORLD_BOUNDS } from '@shared/constants/physics';
 import { InputController, InputRegistry } from '@/game/input/InputSystem';
 
@@ -33,6 +34,8 @@ interface SerializableBody {
   };
   ownerId?: string;
   label?: string;
+  // Sprite info for rendering
+  sprite?: { sheet: string; row: number; offsetX: number; offsetY: number };
   // Optional kinematics for better interpolation
   velocity?: { x: number; y: number };
   angularVelocity?: number;
@@ -96,9 +99,10 @@ export class NetworkedGame {
   
   // Client-side: cache vertices for bodies (since they don't change)
   private verticesCache: Map<string, Array<{ x: number; y: number }>> = new Map();
-  // Client-side: cache owner/label metadata (sent once per body)
+  // Client-side: cache owner/label/sprite metadata (sent once per body)
   private ownerCache: Map<string, string> = new Map();
   private labelCache: Map<string, string> = new Map();
+  private spriteCache: Map<string, { sheet: string; row: number; offsetX: number; offsetY: number }> = new Map();
   
   // Host-side: track which bodies we've sent full data for
   private sentBodies: Set<string> = new Set();
@@ -298,8 +302,6 @@ export class NetworkedGame {
    * Spawn a contraption in the physics world (host only)
    */
   private spawnContraption(x: number, y: number, playerId: string, contraptionData: ContraptionData): void {
-    if (!this.physics) return;
-
     // No resources
 
     // Determine direction: host faces right (1), client faces left (-1)
@@ -325,8 +327,6 @@ export class NetworkedGame {
 
     // Delay spawning until animation finishes
     setTimeout(() => {
-      if (!this.physics) return;
-
       // Create contraption instance
       const contraption = new Contraption(
         `${contraptionData.id}-${Date.now()}`,
@@ -341,18 +341,22 @@ export class NetworkedGame {
         contraption.addBlock(block);
       });
       
-      // Register with physics engine
-      this.physics.registerContraption(contraption);
+      // Only register with physics engine on host
+      if (this.physics) {
+        this.physics.registerContraption(contraption);
+      }
       
-      // Build physics
+      // Build physics (host only)
       const { bodies, constraints } = contraption.buildPhysics(clampedX, y);
       
-      // Add to physics world
-      bodies.forEach(body => {
-        (body as ExtendedBody).ownerId = playerId;
-        this.physics!.addBody(body);
-      });
-      constraints.forEach(constraint => this.physics!.addConstraint(constraint));
+      // Only add to physics world on host
+      if (this.physics) {
+        bodies.forEach(body => {
+          (body as ExtendedBody).ownerId = playerId;
+          this.physics!.addBody(body);
+        });
+        constraints.forEach(constraint => this.physics!.addConstraint(constraint));
+      }
       
       if (import.meta.env.DEV) console.log('Spawned contraption at', clampedX, y, 'for player', playerId, 'direction', direction);
     }, durationMs);
@@ -394,6 +398,7 @@ export class NetworkedGame {
       }
       if (body.ownerId && !this.ownerCache.has(body.id)) this.ownerCache.set(body.id, body.ownerId);
       if (body.label && !this.labelCache.has(body.id)) this.labelCache.set(body.id, body.label);
+      if (body.sprite && !this.spriteCache.has(body.id)) this.spriteCache.set(body.id, body.sprite);
     });
     
     this.snapshotBuffer.push(snapshot);
@@ -486,6 +491,7 @@ export class NetworkedGame {
           this.sentBodies.add(id);
         }
         
+        const block = (body as unknown as { block?: BaseBlock }).block;
         return {
           id,
           position: { x: body.position.x, y: body.position.y },
@@ -496,7 +502,6 @@ export class NetworkedGame {
           render: {
             fillStyle: (body.render as Matter.IBodyRenderOptions)?.fillStyle || (body.isStatic ? '#555555' : '#3498db'),
             healthPercent: (() => {
-              const block = (body as unknown as { block?: { health: number; maxHealth: number } }).block;
               if (block && block.maxHealth > 0) {
                 return Math.max(0, Math.min(1, block.health / block.maxHealth));
               }
@@ -511,6 +516,12 @@ export class NetworkedGame {
           },
           ownerId: isNew ? ((body as ExtendedBody).ownerId || undefined) : undefined,
           label: isNew ? (body.label || undefined) : undefined,
+          sprite: isNew && block ? {
+            sheet: block.getSpritesheetName() || '',
+            row: block.getSpriteRow(),
+            offsetX: block.getSpriteOffset().x,
+            offsetY: block.getSpriteOffset().y,
+          } : undefined,
           velocity: { x: (body as unknown as { velocity?: { x: number; y: number } }).velocity?.x || 0, y: (body as unknown as { velocity?: { x: number; y: number } }).velocity?.y || 0 },
           angularVelocity: (body as unknown as { angularVelocity?: number }).angularVelocity || 0,
         };
@@ -681,7 +692,8 @@ export class NetworkedGame {
         render: body.render,
       };
       (fakeBody as unknown as { ownerId?: string }).ownerId = this.ownerCache.get(body.id);
-      (fakeBody as unknown as { label?: string }).label = this.labelCache.get(body.id);
+      (fakeBody as unknown as { label?: string }).label = body.label || this.labelCache.get(body.id);
+      (fakeBody as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } }).sprite = body.sprite || this.spriteCache.get(body.id);
       result.push(fakeBody as Matter.Body);
     });
 
@@ -780,8 +792,9 @@ export class NetworkedGame {
         };
         
         // Add cached metadata
-        (fakeBody as Partial<Matter.Body> & { id: number; ownerId?: string; label?: string }).ownerId = this.ownerCache.get(id);
-        (fakeBody as Partial<Matter.Body> & { id: number; ownerId?: string; label?: string }).label = this.labelCache.get(id);
+        (fakeBody as Partial<Matter.Body> & { id: number; ownerId?: string; label?: string; sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } }).ownerId = this.ownerCache.get(id);
+        (fakeBody as Partial<Matter.Body> & { id: number; ownerId?: string; label?: string; sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } }).label = nextBody.label || prevBody.label || this.labelCache.get(id);
+        (fakeBody as Partial<Matter.Body> & { id: number; ownerId?: string; label?: string; sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } }).sprite = nextBody.sprite || prevBody.sprite || this.spriteCache.get(id);
 
         result.push(fakeBody as Matter.Body);
       }

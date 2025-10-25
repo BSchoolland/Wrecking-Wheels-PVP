@@ -7,9 +7,10 @@ import type { GameState } from '@shared/types/GameState';
 import { WORLD_BOUNDS } from '@shared/constants/physics';
 import { Camera } from '@/core/Camera';
 import { EffectManager } from './EffectManager';
-import type { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
 import type * as Matter from 'matter-js';
 import { CONTRAPTION_DEBUG } from '@/game/contraptions';
+import { BlockRenderer } from './BlockRenderer';
+import { SpriteManager } from './SpriteManager';
 
 // Camera tuning constants (no magic numbers)
 const CAMERA_SMOOTHING = 0.02; // 0-1, higher is snappier
@@ -40,6 +41,11 @@ export class Renderer {
     this.effects = new EffectManager();
     this.resizeCanvas();
     window.addEventListener('resize', this.onResizeHandler);
+    
+    // Load sprites once at initialization
+    SpriteManager.loadSprites().catch((err) => {
+      if (import.meta.env.DEV) console.warn('Failed to load sprites:', err);
+    });
   }
 
   setPlayerRole(role: 'host' | 'client'): void {
@@ -258,37 +264,50 @@ export class Renderer {
       this.ctx.strokeStyle = '#000000';
       this.ctx.lineWidth = 2;
 
-      // Render based on body type
-      if (body.circleRadius) {
-        // Circle
-        this.ctx.beginPath();
-        this.ctx.arc(body.position.x, body.position.y, body.circleRadius, 0, Math.PI * 2);
-        this.ctx.fill();
-        this.ctx.stroke();
-        
-        // Draw a line to show rotation
-        this.ctx.beginPath();
-        this.ctx.moveTo(body.position.x, body.position.y);
-        this.ctx.lineTo(
-          body.position.x + Math.cos(body.angle) * body.circleRadius,
-          body.position.y + Math.sin(body.angle) * body.circleRadius
-        );
-        this.ctx.stroke();
+      // Render sprite if available, otherwise render physics body
+      const sprite = (body as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } })?.sprite;
+      if (sprite?.sheet) {
+        BlockRenderer.renderSprite(this.ctx, body, sprite.sheet, sprite.row, sprite.offsetX, sprite.offsetY);
       } else {
-        // Polygon
-        const vertices = body.vertices;
-        if (!vertices || vertices.length === 0) {
+        // Check if this is a secondary body of a multi-body block (skip rendering)
+        const isSecondaryBody = (body as unknown as { _isSecondaryBody?: boolean })?._isSecondaryBody;
+        if (isSecondaryBody) {
           this.ctx.restore();
           return;
         }
-        this.ctx.beginPath();
-        this.ctx.moveTo(vertices[0].x, vertices[0].y);
-        for (let i = 1; i < vertices.length; i++) {
-          this.ctx.lineTo(vertices[i].x, vertices[i].y);
+
+        // Render based on body type
+        if (body.circleRadius) {
+          // Circle
+          this.ctx.beginPath();
+          this.ctx.arc(body.position.x, body.position.y, body.circleRadius, 0, Math.PI * 2);
+          this.ctx.fill();
+          this.ctx.stroke();
+          
+          // Draw a line to show rotation
+          this.ctx.beginPath();
+          this.ctx.moveTo(body.position.x, body.position.y);
+          this.ctx.lineTo(
+            body.position.x + Math.cos(body.angle) * body.circleRadius,
+            body.position.y + Math.sin(body.angle) * body.circleRadius
+          );
+          this.ctx.stroke();
+        } else {
+          // Polygon
+          const vertices = body.vertices;
+          if (!vertices || vertices.length === 0) {
+            this.ctx.restore();
+            return;
+          }
+          this.ctx.beginPath();
+          this.ctx.moveTo(vertices[0].x, vertices[0].y);
+          for (let i = 1; i < vertices.length; i++) {
+            this.ctx.lineTo(vertices[i].x, vertices[i].y);
+          }
+          this.ctx.closePath();
+          this.ctx.fill();
+          this.ctx.stroke();
         }
-        this.ctx.closePath();
-        this.ctx.fill();
-        this.ctx.stroke();
       }
 
       // Apply tint overlay if damaged
@@ -317,12 +336,8 @@ export class Renderer {
         this.ctx.globalAlpha = 1;
       }
 
-      // Render damage cracks (host or client): compute healthPercent from available source
-      const block = (body as unknown as { block?: BaseBlock }).block;
-      const crackHp: number | undefined = block
-        ? Math.max(0, Math.min(1, block.health / block.maxHealth))
-        : renderOpts?.healthPercent;
-      this.effects.renderDamageCracksByPercent(this.ctx, body, crackHp);
+      // Render damage cracks using healthPercent from render options
+      this.effects.renderDamageCracksByPercent(this.ctx, body, renderOpts?.healthPercent);
 
       this.ctx.restore();
     });

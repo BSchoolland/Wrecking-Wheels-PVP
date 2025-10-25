@@ -11,6 +11,14 @@ export class SimpleBlock extends BaseBlock {
     super(id, 'simple', gridX, gridY, 100);
     this.energyCost = 0.2;
   }
+
+  getSpritesheetName(): string | undefined {
+    return 'blocks';
+  }
+
+  getSpriteRow(): number {
+    return 0;
+  }
   
   getAttachmentFaces(): AttachmentDirection[] {
     return ['top', 'right', 'bottom', 'left'];

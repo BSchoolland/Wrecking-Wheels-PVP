@@ -15,6 +15,14 @@ export class TNTBlock extends BaseBlock {
     this.energyCost = 3;
   }
 
+  getSpritesheetName(): string | undefined {
+    return 'blocks';
+  }
+
+  getSpriteRow(): number {
+    return 4;
+  }
+
   getAttachmentFaces(): AttachmentDirection[] {
     return ['top', 'right', 'bottom', 'left'];
   }

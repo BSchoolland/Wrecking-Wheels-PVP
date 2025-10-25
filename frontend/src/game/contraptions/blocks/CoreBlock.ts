@@ -12,6 +12,14 @@ export class CoreBlock extends BaseBlock {
     this.fragile = true;
     this.energyCost = 0.2;
   }
+
+  getSpritesheetName(): string | undefined {
+    return 'blocks';
+  }
+
+  getSpriteRow(): number {
+    return 1;
+  }
   
   getAttachmentFaces(): AttachmentDirection[] {
     return ['top', 'right', 'bottom', 'left'];
