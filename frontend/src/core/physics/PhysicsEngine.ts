@@ -254,6 +254,8 @@ export class PhysicsEngine {
         if (ownerId && body.label?.endsWith('-rocket')) {
           const hold = this.rocketHold.get(ownerId) || false;
           (body as unknown as { rocketThrusting?: boolean }).rocketThrusting = hold;
+          // Expose sprite column for rendering (0 = idle, 1 = active)
+          (body as unknown as { spriteCol?: number }).spriteCol = hold ? 1 : 0;
         }
       }
 

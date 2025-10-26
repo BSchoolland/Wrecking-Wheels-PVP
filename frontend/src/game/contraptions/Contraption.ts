@@ -174,12 +174,15 @@ export class Contraption {
           if (sheet) {
             // Apply offset only to primary body; secondary bodies don't need offset
             const isSecondaryBody = body !== result.primaryBody;
-            (body as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; flipX?: boolean } }).sprite = {
+            const size = block.getSpriteSize();
+            (body as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; flipX?: boolean; width?: number; height?: number } }).sprite = {
               sheet,
               row: spriteRow,
               offsetX: isSecondaryBody ? 0 : block.getSpriteOffset().x,
               offsetY: isSecondaryBody ? 0 : block.getSpriteOffset().y,
               flipX: this.direction === -1,
+              width: size.width,
+              height: size.height,
             };
           }
         }

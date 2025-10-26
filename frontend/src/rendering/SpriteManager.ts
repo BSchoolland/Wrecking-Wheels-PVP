@@ -60,38 +60,41 @@ export class SpriteManager {
    * @param spriteCol Which column (0-indexed, represents animation frame, defaults to 0)
    * @returns Canvas with the extracted sprite (cached for performance)
    */
-  getSprite(spritesheetName: string, spriteRow: number, spriteCol: number = 0): HTMLCanvasElement {
+  getSprite(spritesheetName: string, spriteRow: number, spriteCol: number = 0, spriteWidth?: number, spriteHeight?: number): HTMLCanvasElement {
     const spritesheet = this.loadedSpritesheets.get(spritesheetName);
     if (!spritesheet) {
       throw new Error(`Spritesheet not loaded: ${spritesheetName}. Call loadSpritesheet() first.`);
     }
 
     // Check cache first
-    const cacheKey = `${spritesheetName}_${spriteRow}_${spriteCol}`;
+    const width = spriteWidth ?? this.spriteSize;
+    const height = spriteHeight ?? this.spriteSize;
+    const cacheKey = `${spritesheetName}_${spriteRow}_${spriteCol}_${width}x${height}`;
     if (this.spriteCache.has(cacheKey)) {
       return this.spriteCache.get(cacheKey)!;
     }
 
     // Extract and cache sprite
     const canvas = document.createElement('canvas');
-    canvas.width = this.spriteSize;
-    canvas.height = this.spriteSize;
+    canvas.width = width;
+    canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('Failed to get canvas context for sprite');
 
-    const sourceX = spriteCol * this.spriteSize;
-    const sourceY = spriteRow * this.spriteSize;
+    // Use provided frame width/height for stepping across the sheet (supports 16x8 rockets, etc.)
+    const sourceX = spriteCol * width;
+    const sourceY = spriteRow * height;
 
     ctx.drawImage(
       spritesheet,
       sourceX,
       sourceY,
-      this.spriteSize,
-      this.spriteSize,
+      width,
+      height,
       0,
       0,
-      this.spriteSize,
-      this.spriteSize
+      width,
+      height
     );
 
     this.spriteCache.set(cacheKey, canvas);
@@ -103,6 +106,14 @@ export class SpriteManager {
    */
   getScaleFactor(): number {
     return this.targetSize / this.spriteSize;
+  }
+
+  /**
+   * Get scale factor for a given source sprite height (in px).
+   * Ensures sprite height maps to targetSize (e.g., 8px -> 32px).
+   */
+  getScaleFactorFor(sourceSpriteHeight: number): number {
+    return this.targetSize / sourceSpriteHeight;
   }
 
   /**

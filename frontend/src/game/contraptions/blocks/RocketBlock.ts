@@ -25,6 +25,16 @@ export class RocketBlock extends BaseBlock {
     return 5;
   }
 
+  // Rocket uses a 16x8 sprite (space for flame when active)
+  getSpriteSize(): { width: number; height: number } {
+    return { width: 16, height: 8 };
+  }
+
+  // Center the right half of the 16x8 sprite on the block (leave left half for flame)
+  getSpriteOffset(): { x: number; y: number } {
+    return { x: -16, y: 0 };
+  }
+
   getAttachmentFaces(): AttachmentDirection[] {
     // Connects from the right
     return ['right'];

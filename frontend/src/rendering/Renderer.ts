@@ -265,7 +265,7 @@ export class Renderer {
       this.ctx.lineWidth = 2;
 
       // Render physics body when in contraption debug, otherwise prefer sprite if available
-      const sprite = (body as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } })?.sprite;
+      const sprite = (body as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; width?: number; height?: number } })?.sprite;
       if (CONTRAPTION_DEBUG) {
         BlockRenderer.renderPhysicsBody(this.ctx, body);
       } else if (sprite?.sheet) {

@@ -35,7 +35,7 @@ interface SerializableBody {
   ownerId?: string;
   label?: string;
   // Sprite info for rendering
-  sprite?: { sheet: string; row: number; offsetX: number; offsetY: number };
+  sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; col?: number };
   // Optional kinematics for better interpolation
   velocity?: { x: number; y: number };
   angularVelocity?: number;
@@ -102,7 +102,7 @@ export class NetworkedGame {
   // Client-side: cache owner/label/sprite metadata (sent once per body)
   private ownerCache: Map<string, string> = new Map();
   private labelCache: Map<string, string> = new Map();
-  private spriteCache: Map<string, { sheet: string; row: number; offsetX: number; offsetY: number }> = new Map();
+  private spriteCache: Map<string, { sheet: string; row: number; offsetX: number; offsetY: number; col?: number }> = new Map();
   
   // Host-side: track which bodies we've sent full data for
   private sentBodies: Set<string> = new Set();
@@ -517,11 +517,12 @@ export class NetworkedGame {
           ownerId: isNew ? ((body as ExtendedBody).ownerId || undefined) : undefined,
           label: isNew ? (body.label || undefined) : undefined,
           // Prefer existing per-body sprite if already set (e.g., wheel sub-bodies)
-          sprite: isNew ? (((body as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } }).sprite) || (block ? {
+          sprite: isNew ? (((body as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; col?: number } }).sprite) || (block ? {
             sheet: block.getSpritesheetName() || '',
             row: block.getSpriteRow(),
             offsetX: block.getSpriteOffset().x,
             offsetY: block.getSpriteOffset().y,
+            col: (body as unknown as { spriteCol?: number }).spriteCol || 0,
           } : undefined)) : undefined,
           velocity: { x: (body as unknown as { velocity?: { x: number; y: number } }).velocity?.x || 0, y: (body as unknown as { velocity?: { x: number; y: number } }).velocity?.y || 0 },
           angularVelocity: (body as unknown as { angularVelocity?: number }).angularVelocity || 0,
@@ -694,7 +695,7 @@ export class NetworkedGame {
       };
       (fakeBody as unknown as { ownerId?: string }).ownerId = this.ownerCache.get(body.id);
       (fakeBody as unknown as { label?: string }).label = body.label || this.labelCache.get(body.id);
-      (fakeBody as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } }).sprite = body.sprite || this.spriteCache.get(body.id);
+      (fakeBody as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; width?: number; height?: number; col?: number } }).sprite = body.sprite || this.spriteCache.get(body.id);
       result.push(fakeBody as Matter.Body);
     });
 
@@ -793,9 +794,9 @@ export class NetworkedGame {
         };
         
         // Add cached metadata
-        (fakeBody as Partial<Matter.Body> & { id: number; ownerId?: string; label?: string; sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } }).ownerId = this.ownerCache.get(id);
-        (fakeBody as Partial<Matter.Body> & { id: number; ownerId?: string; label?: string; sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } }).label = nextBody.label || prevBody.label || this.labelCache.get(id);
-        (fakeBody as Partial<Matter.Body> & { id: number; ownerId?: string; label?: string; sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } }).sprite = nextBody.sprite || prevBody.sprite || this.spriteCache.get(id);
+        (fakeBody as Partial<Matter.Body> & { id: number; ownerId?: string; label?: string; sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; col?: number } }).ownerId = this.ownerCache.get(id);
+        (fakeBody as Partial<Matter.Body> & { id: number; ownerId?: string; label?: string; sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; col?: number } }).label = nextBody.label || prevBody.label || this.labelCache.get(id);
+        (fakeBody as Partial<Matter.Body> & { id: number; ownerId?: string; label?: string; sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; width?: number; height?: number; col?: number } }).sprite = nextBody.sprite || prevBody.sprite || this.spriteCache.get(id);
 
         result.push(fakeBody as Matter.Body);
       }

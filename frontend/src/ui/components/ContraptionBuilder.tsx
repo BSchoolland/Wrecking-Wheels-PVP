@@ -260,7 +260,7 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     // Render all contraption bodies (sprites or physics bodies)
     const bodiesToRender = Matter.Composite.allBodies(world);
     bodiesToRender.forEach(body => {
-      const sprite = (body as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } })?.sprite;
+      const sprite = (body as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; width?: number; height?: number } })?.sprite;
       if (sprite?.sheet) {
         BlockRenderer.renderSprite(ctx, body, sprite.sheet, sprite.row, sprite.offsetX, sprite.offsetY);
       } else {

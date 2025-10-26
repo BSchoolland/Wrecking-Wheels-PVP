@@ -94,6 +94,14 @@ export abstract class BaseBlock {
   }
 
   /**
+   * Get the source sprite size in pixels within the spritesheet.
+   * Default is 8x8; override for wider/taller sprites (e.g., 16x8 rocket with flame).
+   */
+  getSpriteSize(): { width: number; height: number } {
+    return { width: 8, height: 8 };
+  }
+
+  /**
    * Get which faces this block can attach to neighbors
    */
   abstract getAttachmentFaces(): AttachmentDirection[];

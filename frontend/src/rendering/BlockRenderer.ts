@@ -26,8 +26,15 @@ export class BlockRenderer {
     }
 
     try {
-      const spriteCanvas = this.spriteManager.getSprite(spritesheetName, spriteRow, 0);
-      const scale = this.spriteManager.getScaleFactor();
+      // Optional per-sprite size (e.g., 16x8 rocket). Default 8x8.
+      const size = (body as unknown as { sprite?: { width?: number; height?: number } }).sprite || {};
+      const srcW = typeof size.width === 'number' ? size.width : undefined;
+      const srcH = typeof size.height === 'number' ? size.height : undefined;
+
+      const currentCol = (body as unknown as { spriteCol?: number }).spriteCol ??
+        ((body as unknown as { sprite?: { col?: number } }).sprite?.col ?? 0);
+      const spriteCanvas = this.spriteManager.getSprite(spritesheetName, spriteRow, currentCol, srcW, srcH);
+      const scale = this.spriteManager.getScaleFactorFor(spriteCanvas.height);
       const flipX = (body as unknown as { sprite?: { flipX?: boolean } }).sprite?.flipX === true;
 
       ctx.save();
@@ -42,7 +49,9 @@ export class BlockRenderer {
       }
       
       ctx.scale(scale, scale);
-      ctx.drawImage(spriteCanvas, -4, -4);
+      const halfW = spriteCanvas.width / 2;
+      const halfH = spriteCanvas.height / 2;
+      ctx.drawImage(spriteCanvas, -halfW, -halfH);
       ctx.restore();
     } catch (error) {
       console.warn(`Failed to render sprite:`, error);
