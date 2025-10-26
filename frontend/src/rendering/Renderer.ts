@@ -264,18 +264,13 @@ export class Renderer {
       this.ctx.strokeStyle = '#000000';
       this.ctx.lineWidth = 2;
 
-      // Render sprite if available, otherwise render physics body
+      // Render physics body when in contraption debug, otherwise prefer sprite if available
       const sprite = (body as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } })?.sprite;
-      if (sprite?.sheet) {
+      if (CONTRAPTION_DEBUG) {
+        BlockRenderer.renderPhysicsBody(this.ctx, body);
+      } else if (sprite?.sheet) {
         BlockRenderer.renderSprite(this.ctx, body, sprite.sheet, sprite.row, sprite.offsetX, sprite.offsetY);
       } else {
-        // Check if this is a secondary body of a multi-body block (skip rendering)
-        const isSecondaryBody = (body as unknown as { _isSecondaryBody?: boolean })?._isSecondaryBody;
-        if (isSecondaryBody) {
-          this.ctx.restore();
-          return;
-        }
-
         // Render based on body type
         if (body.circleRadius) {
           // Circle

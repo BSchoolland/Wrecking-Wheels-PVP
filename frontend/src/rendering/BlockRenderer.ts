@@ -28,12 +28,15 @@ export class BlockRenderer {
     try {
       const spriteCanvas = this.spriteManager.getSprite(spritesheetName, spriteRow, 0);
       const scale = this.spriteManager.getScaleFactor();
+      const flipX = (body as unknown as { sprite?: { flipX?: boolean } }).sprite?.flipX === true;
 
       ctx.save();
       ctx.imageSmoothingEnabled = false;
       ctx.translate(body.position.x, body.position.y);
       ctx.rotate(body.angle);
-      
+      if (flipX) {
+        ctx.scale(-1, 1);
+      }
       if (offsetX !== 0 || offsetY !== 0) {
         ctx.translate(offsetX, offsetY);
       }

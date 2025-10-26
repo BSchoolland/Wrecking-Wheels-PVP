@@ -162,17 +162,24 @@ export class Contraption {
         (body as unknown as { contraptionId?: string }).contraptionId = this.id;
         (body as unknown as { team?: string }).team = this.team;
         (body as unknown as { blockId?: string }).blockId = block.id;
-        // Only attach block reference and sprite data to primary body
+        // Only attach block reference to primary body
         if (body === result.primaryBody) {
           (body as unknown as { block?: BaseBlock }).block = block;
-          // Attach sprite data for network transmission
+        }
+        // Apply sprite data if body has spriteRow defined, or if it's the primary body
+        const bodyWithSprite = body as unknown as { spriteRow?: number };
+        const spriteRow = bodyWithSprite.spriteRow ?? (body === result.primaryBody ? block.getSpriteRow() : undefined);
+        if (spriteRow !== undefined) {
           const sheet = block.getSpritesheetName();
           if (sheet) {
-            (body as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } }).sprite = {
+            // Apply offset only to primary body; secondary bodies don't need offset
+            const isSecondaryBody = body !== result.primaryBody;
+            (body as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; flipX?: boolean } }).sprite = {
               sheet,
-              row: block.getSpriteRow(),
-              offsetX: block.getSpriteOffset().x,
-              offsetY: block.getSpriteOffset().y,
+              row: spriteRow,
+              offsetX: isSecondaryBody ? 0 : block.getSpriteOffset().x,
+              offsetY: isSecondaryBody ? 0 : block.getSpriteOffset().y,
+              flipX: this.direction === -1,
             };
           }
         }

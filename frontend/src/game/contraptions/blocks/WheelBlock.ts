@@ -60,6 +60,7 @@ export class WheelBlock extends BaseBlock {
         }
       }
     );
+    (attachmentFace as unknown as { spriteRow?: number }).spriteRow = 2;
     
     // Wheel (circle that rolls)
     const wheel = Matter.Bodies.circle(
@@ -75,8 +76,7 @@ export class WheelBlock extends BaseBlock {
         }
       }
     );
-    // Mark wheel as secondary body (only primary attachment face should render sprite)
-    (wheel as unknown as { _isSecondaryBody: boolean })._isSecondaryBody = true;
+    (wheel as unknown as { spriteRow?: number }).spriteRow = 7;
     // Apply wheel drive based on per-body input set by physics (currentWheelInput)
     (wheel as unknown as { driveDir?: number }).driveDir = direction;
     (wheel as unknown as { onTick?: () => void }).onTick = () => {

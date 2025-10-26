@@ -20,7 +20,7 @@ export class TNTBlock extends BaseBlock {
   }
 
   getSpriteRow(): number {
-    return 4;
+    return 6;
   }
 
   getAttachmentFaces(): AttachmentDirection[] {

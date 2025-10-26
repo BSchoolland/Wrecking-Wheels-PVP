@@ -19,7 +19,7 @@ export class GrayBlock extends BaseBlock {
   }
 
   getSpriteRow(): number {
-    return 6;
+    return 4;
   }
   
   getAttachmentFaces(): AttachmentDirection[] {

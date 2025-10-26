@@ -110,11 +110,15 @@ export class PhysicsEngine {
     const allConstraints = Matter.Composite.allConstraints(this.world);
     const affectedContraptions = new Set<string>();
     const explodedBlocks = new Set<string>();
+    const deadBlockIds = new Set<string>();
     
     // Find blocks with 0 health
     allBodies.forEach(body => {
       const block = (body as unknown as { block?: BaseBlock }).block;
       if (block && block.health <= 0) {
+        // Track the whole block so we can remove all sibling bodies (e.g., wheels)
+        const blockId = (body as unknown as { blockId?: string }).blockId;
+        if (blockId) deadBlockIds.add(blockId);
         // Trigger TNT explosion once per block
         if ((block as unknown as { type?: string }).type === 'tnt' && !explodedBlocks.has(block.id)) {
           explodedBlocks.add(block.id);
@@ -184,6 +188,16 @@ export class PhysicsEngine {
         }
       }
     });
+
+    // Also remove any sibling bodies that belong to dead blocks (matched by blockId)
+    if (deadBlockIds.size > 0) {
+      allBodies.forEach(body => {
+        const bid = (body as unknown as { blockId?: string }).blockId;
+        if (bid && deadBlockIds.has(bid)) {
+          this.bodiesToRemove.add(body);
+        }
+      });
+    }
     
     // Remove constraints connected to dead bodies
     allConstraints.forEach(constraint => {

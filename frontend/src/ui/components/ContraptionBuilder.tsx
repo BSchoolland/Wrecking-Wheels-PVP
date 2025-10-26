@@ -250,37 +250,12 @@ export function ContraptionBuilder({ onBack }: ContraptionBuilderProps) {
     const previewEngine = Matter.Engine.create({ gravity: { x: 0, y: 0, scale: 0 } });
     const world = previewEngine.world;
 
-    // Build real bodies/constraints with block logic into this world
-    contraption.getAllBlocks().forEach(block => {
-      const worldX = offsetX + block.gridX * gridSize;
-      const worldY = offsetY + block.gridY * gridSize;
-      const { bodies, constraints } = block.createPhysicsBodies(worldX, worldY);
-      const rotation = (block as unknown as { rotation?: number }).rotation || 0;
-      if (rotation) {
-        const cos = Math.cos(rotation);
-        const sin = Math.sin(rotation);
-        bodies.forEach(body => {
-          const dx = body.position.x - worldX;
-          const dy = body.position.y - worldY;
-          const rx = dx * cos - dy * sin;
-          const ry = dx * sin + dy * cos;
-          Matter.Body.setPosition(body, { x: worldX + rx, y: worldY + ry });
-          Matter.Body.setAngle(body, (body.angle || 0) + rotation);
-        });
-      }
-      // Attach sprite data to primary body for rendering
-      const sheet = block.getSpritesheetName();
-      if (sheet) {
-        (bodies[0] as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } }).sprite = {
-          sheet,
-          row: block.getSpriteRow(),
-          offsetX: block.getSpriteOffset().x,
-          offsetY: block.getSpriteOffset().y,
-        };
-      }
-      Matter.World.add(world, bodies);
-      if (constraints.length) Matter.World.add(world, constraints as unknown as Matter.Constraint[]);
-    });
+    // Build using the same orchestration as the game to avoid divergence
+    const previewContraption = new Contraption(contraption.id, contraption.name);
+    contraption.getAllBlocks().forEach(b => previewContraption.addBlock(b));
+    const { bodies, constraints } = previewContraption.buildPhysics(offsetX, offsetY);
+    if (bodies.length) Matter.World.add(world, bodies);
+    if (constraints.length) Matter.World.add(world, constraints as unknown as Matter.Constraint[]);
 
     // Render all contraption bodies (sprites or physics bodies)
     const bodiesToRender = Matter.Composite.allBodies(world);

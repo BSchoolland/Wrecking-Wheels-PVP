@@ -516,12 +516,13 @@ export class NetworkedGame {
           },
           ownerId: isNew ? ((body as ExtendedBody).ownerId || undefined) : undefined,
           label: isNew ? (body.label || undefined) : undefined,
-          sprite: isNew && block ? {
+          // Prefer existing per-body sprite if already set (e.g., wheel sub-bodies)
+          sprite: isNew ? (((body as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number } }).sprite) || (block ? {
             sheet: block.getSpritesheetName() || '',
             row: block.getSpriteRow(),
             offsetX: block.getSpriteOffset().x,
             offsetY: block.getSpriteOffset().y,
-          } : undefined,
+          } : undefined)) : undefined,
           velocity: { x: (body as unknown as { velocity?: { x: number; y: number } }).velocity?.x || 0, y: (body as unknown as { velocity?: { x: number; y: number } }).velocity?.y || 0 },
           angularVelocity: (body as unknown as { angularVelocity?: number }).angularVelocity || 0,
         };
