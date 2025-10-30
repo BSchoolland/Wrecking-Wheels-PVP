@@ -98,9 +98,8 @@ export class Renderer {
   }
 
   private renderTerrain(state: GameState): void {
-    // Render ground
-    this.ctx.fillStyle = '#8B7355'; // Brown
-    this.ctx.fillRect(0, WORLD_BOUNDS.HEIGHT, WORLD_BOUNDS.WIDTH, 50);
+    // Ground is now rendered as physics bodies with random brown shading
+    // See MapLoader.loadMap() for ground block generation
 
     // Render obstacles
     state.terrain.obstacles.forEach(obstacle => {
@@ -227,7 +226,7 @@ export class Renderer {
       this.battleCameraInitialized = true;
       if (this.baseZoom === null) {
         this.baseZoom = this.camera.zoom * 3; // start 3x more zoomed in for battle
-        this.camera.zoom = this.baseZoom; // apply immediately
+        this.camera.setZoom(this.baseZoom); // apply immediately
       }
     }
 

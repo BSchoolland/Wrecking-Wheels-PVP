@@ -4,7 +4,11 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { NetworkedGame } from '@/game/NetworkedGame';
+import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
+import { Renderer } from '@/rendering/Renderer';
+import { WORLD_BOUNDS } from '@shared/constants/physics';
 import { ContraptionBuilder } from '@/ui/components/ContraptionBuilder';
+import { ContraptionTester } from '@/ui/components/ContraptionTester';
 // Decks removed in arena mode
 import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
 import './App.css';
@@ -34,8 +38,10 @@ const initializeDefaults = async () => {
   }
 };
 
-type View = 'menu' | 'lobby' | 'game' | 'builder';
+type View = 'menu' | 'lobby' | 'game' | 'builder' | 'test';
 type Role = 'host' | 'client';
+
+type QueueJoinResponse = { success: boolean; lobbyId: string; role: Role; status: 'waiting' | 'ready'; players?: string[] };
 
 function App() {
   const [view, setView] = useState<View>('menu');
@@ -45,25 +51,75 @@ function App() {
   const [selectedContraption, setSelectedContraption] = useState<ContraptionSaveData | null>(null);
   // Energy/health removed in arena mode
   const [gameOver, setGameOver] = useState<string | null>(null);
+  const [isWaiting, setIsWaiting] = useState(false);
+  const [contraptionToTest, setContraptionToTest] = useState<ContraptionSaveData | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const bgCanvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<NetworkedGame | null>(null);
+  const bgRendererRef = useRef<Renderer | null>(null);
+  const bgPhysicsRef = useRef<PhysicsEngine | null>(null);
+  const bgAnimRef = useRef<number | null>(null);
   const selectedRef = useRef<ContraptionSaveData | null>(null);
+  const pollIntervalRef = useRef<number | null>(null);
 
-
-  const createLobby = () => {
-    const newLobbyId = `lobby-${Date.now()}`;
-    setLobbyId(newLobbyId);
-    setRole('host');
-    setView('lobby');
+  // Single Play action -> queue join
+  const play = async () => {
+    try {
+      setIsWaiting(true);
+      const res = await fetch('/api/matchmaking/queue/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId }),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status} ${res.statusText}${text ? `: ${text}` : ''}`);
+      }
+      const data = (await res.json()) as QueueJoinResponse;
+      if (!data.success) throw new Error('Failed to join queue');
+      setLobbyId(data.lobbyId);
+      setRole(data.role);
+      setView('lobby');
+      if (data.status === 'waiting') {
+        startPollingForReady(data.lobbyId);
+      } else {
+        setIsWaiting(false);
+      }
+    } catch (e) {
+      console.error('Queue join failed', e);
+      setIsWaiting(false);
+      alert('Failed to join matchmaking. Is the backend running on port 3001?');
+    }
   };
 
-  const joinLobby = () => {
-    const inputLobbyId = prompt('Enter lobby ID:');
-    if (inputLobbyId) {
-      setLobbyId(inputLobbyId);
-      setRole('client');
-      setView('lobby');
+  const startPollingForReady = (id: string) => {
+    if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
+    pollIntervalRef.current = window.setInterval(async () => {
+      try {
+        const res = await fetch(`/api/matchmaking/lobby/${id}`);
+        if (!res.ok) return;
+        const { lobby } = await res.json();
+        if (lobby?.status === 'ready') {
+          setIsWaiting(false);
+          if (pollIntervalRef.current) { window.clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
+        }
+      } catch {
+        void 0; // ignore transient errors
+      }
+    }, 1000);
+  };
+
+  const leaveQueueIfWaiting = async () => {
+    if (!isWaiting) return;
+    try {
+      await fetch('/api/matchmaking/queue/leave', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId }),
+      });
+    } catch {
+      void 0; // ignore errors on best-effort leave
     }
   };
 
@@ -79,6 +135,8 @@ function App() {
     }
     setView('menu');
     setLobbyId('');
+    setIsWaiting(false);
+    if (pollIntervalRef.current) { window.clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
   };
 
   useEffect(() => {
@@ -125,66 +183,116 @@ function App() {
     }
   }, [view, role, lobbyId, playerId, selectedContraption]);
 
+  // Background physics + render loop for non-game views
+  useEffect(() => {
+    if (view !== 'game' && bgCanvasRef.current) {
+      // Initialize once per entry into non-game view
+      if (!bgRendererRef.current) {
+        bgRendererRef.current = new Renderer(bgCanvasRef.current);
+        bgRendererRef.current.camera.setControlsEnabled(false);
+        bgRendererRef.current.camera.y = WORLD_BOUNDS.HEIGHT * 0.3;
+        bgRendererRef.current.camera.setZoom(bgRendererRef.current.camera.zoom * 1.25);
+      }
+      if (!bgPhysicsRef.current) {
+        bgPhysicsRef.current = new PhysicsEngine();
+        bgPhysicsRef.current.start();
+      }
+      const loop = () => {
+        if (bgRendererRef.current && bgPhysicsRef.current) {
+          bgRendererRef.current.renderPhysics(bgPhysicsRef.current.getAllBodies());
+        }
+        bgAnimRef.current = requestAnimationFrame(loop);
+      };
+      if (!bgAnimRef.current) bgAnimRef.current = requestAnimationFrame(loop);
+      return () => {
+        if (bgAnimRef.current) { cancelAnimationFrame(bgAnimRef.current); bgAnimRef.current = null; }
+      };
+    } else {
+      // Tear down when entering game view
+      if (bgAnimRef.current) { cancelAnimationFrame(bgAnimRef.current); bgAnimRef.current = null; }
+      bgRendererRef.current?.destroy();
+      bgRendererRef.current = null;
+      bgPhysicsRef.current?.destroy();
+      bgPhysicsRef.current = null;
+    }
+  }, [view]);
+
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
+      void leaveQueueIfWaiting();
+    };
+  }, []);
+
   return (
     <div className="app">
-      <h1>Wrecking Wheels PVP</h1>
-      
-      {view === 'menu' && (
-        <div className="menu">
-          <button onClick={createLobby}>Create Lobby (Host)</button>
-          <button onClick={joinLobby}>Join Lobby (Client)</button>
-          {/* Decks removed */}
-          <button onClick={() => setView('builder')}>Contraption Builder</button>
-        </div>
+      {view !== 'game' && (
+        <canvas
+          ref={bgCanvasRef}
+          className="bg-canvas"
+        />
       )}
-
-      {view === 'builder' && (
-        <ContraptionBuilder onBack={() => setView('menu')} />
-      )}
-
-      {view === 'lobby' && (
-        <div className="lobby">
-          <h2>Lobby: {lobbyId}</h2>
-          <p>Role: <strong>{role === 'host' ? 'Host' : 'Client'}</strong></p>
-          <p className="info">
-            {role === 'host' 
-              ? 'Share this lobby ID with another player. They can join in a new tab/window.'
-              : 'Connecting to host...'}
-          </p>
-          
-          <div className="contraption-selection">
-            <h3>Select Your Contraption</h3>
-            <div className="contraption-list">
-              {(() => {
-                const items: ContraptionSaveData[] = [];
-                for (let i = 0; i < localStorage.length; i++) {
-                  const key = localStorage.key(i);
-                  if (!key || !key.startsWith('contraption-')) continue;
-                  const raw = localStorage.getItem(key);
-                  if (!raw) continue;
-                  try { items.push(JSON.parse(raw)); } catch { /* ignore parse errors */ }
-                }
-                if (items.length === 0) return <p className="no-contraptions">No saved contraptions. Create one in the builder.</p>;
-                return items.map((data) => (
-                  <div 
-                    key={data.id} 
-                    className={`contraption-item ${selectedContraption?.id === data.id ? 'selected' : ''}`}
-                    onClick={() => setSelectedContraption(data)}
-                  >
-                    <div className="contraption-name">{data.name}</div>
-                    <div className="contraption-info">{data.blocks?.length || 0} blocks</div>
-                  </div>
-                ));
-              })()}
+      {view !== 'game' && (
+        <div className="overlay">
+          <h1 className="title">Wrecking Wheels PVP</h1>
+          {view === 'menu' && (
+            <div className="menu">
+              <button className="btn btn-primary" onClick={play} disabled={isWaiting}>Play</button>
+              <button className="btn btn-secondary" onClick={() => setView('builder')}>Contraption Builder</button>
             </div>
-          </div>
-          
-          <div className="lobby-actions">
-            <button onClick={startGame} disabled={!selectedContraption}>Start Game</button>
-            <button onClick={() => { setView('menu'); setLobbyId(''); }}>
-              Back to Menu
-            </button>
-          </div>
+          )}
+
+          {view === 'builder' && (
+            <ContraptionBuilder onBack={() => setView('menu')} onTestStart={(data) => { setContraptionToTest(data); setView('test'); }} />
+          )}
+
+          {view === 'test' && contraptionToTest && (
+            <ContraptionTester contraption={contraptionToTest} onBack={() => setView('builder')} />
+          )}
+
+          {view === 'lobby' && (
+            <div className="lobby">
+              <h2>Lobby: {lobbyId}</h2>
+              <p>Role: <strong>{role === 'host' ? 'Host' : 'Client'}</strong></p>
+              <p className="info">
+                {isWaiting ? 'Waiting for another player to join…' : (role === 'host' ? 'Matched! You will host this game.' : 'Matched! Connecting to host...')}
+              </p>
+
+              <div className="contraption-selection">
+                <h3>Select Your Contraption</h3>
+                <div className="contraption-list">
+                  {(() => {
+                    const items: ContraptionSaveData[] = [];
+                    for (let i = 0; i < localStorage.length; i++) {
+                      const key = localStorage.key(i);
+                      if (!key || !key.startsWith('contraption-')) continue;
+                      const raw = localStorage.getItem(key);
+                      if (!raw) continue;
+                      try { items.push(JSON.parse(raw)); } catch { /* ignore parse errors */ }
+                    }
+                    if (items.length === 0) return <p className="no-contraptions">No saved contraptions. Create one in the builder.</p>;
+                    return items.map((data) => (
+                      <div 
+                        key={data.id} 
+                        className={`contraption-item ${selectedContraption?.id === data.id ? 'selected' : ''}`}
+                        onClick={() => setSelectedContraption(data)}
+                      >
+                        <div className="contraption-name">{data.name}</div>
+                        <div className="contraption-info">{data.blocks?.length || 0} blocks</div>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </div>
+
+              <div className="lobby-actions">
+                <button className="btn btn-primary" onClick={startGame} disabled={!selectedContraption || isWaiting}>Start Game</button>
+                <button className="btn btn-secondary" onClick={() => { setView('menu'); setLobbyId(''); setIsWaiting(false); if (pollIntervalRef.current) { window.clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; } void leaveQueueIfWaiting(); }}>
+                  Back to Menu
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 

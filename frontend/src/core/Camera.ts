@@ -46,7 +46,7 @@ export class Camera {
     // Start centered with zoom that fits the world
     this.x = this.worldWidth / 2;
     this.y = this.worldHeight / 2;
-    this.zoom = this.calculateFitZoom();
+    this.setZoom(this.calculateFitZoom() * 4);
 
     this.setupControls();
   }
@@ -119,7 +119,7 @@ export class Camera {
     this.onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-      this.zoom = Math.max(0.1, Math.min(3, this.zoom * zoomFactor));
+      this.setZoom(this.zoom * zoomFactor);
     };
     this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
     this.controlsAttached = true;
@@ -144,6 +144,13 @@ export class Camera {
     } else {
       this.detachControls();
     }
+  }
+
+  /**
+   * Set zoom to an absolute value (not multiplied)
+   */
+  public setZoom(value: number): void {
+    this.zoom = Math.max(0.1, Math.min(3, value));
   }
 
   /**
@@ -191,14 +198,14 @@ export class Camera {
   resetView(): void {
     this.x = this.worldWidth / 2;
     this.y = this.worldHeight / 2;
-    this.zoom = this.calculateFitZoom();
+    this.setZoom(this.calculateFitZoom());
   }
 
   /**
    * Update camera on window resize
    */
   onResize(): void {
-    this.zoom = this.calculateFitZoom();
+    // Camera transform is relative to canvas dimensions, no need to recalculate zoom
   }
 
   /**
