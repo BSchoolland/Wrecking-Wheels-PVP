@@ -24,11 +24,11 @@ export class PhysicsEngine {
   private constraintsToRemove: Set<Matter.Constraint> = new Set();
   private pendingForces: Map<number, { x: number, y: number }> = new Map();
   private contraptions: Map<string, ContraptionLike> = new Map();
+  private wheelInput: Map<string, number> = new Map();
   private effects: EffectManager | null = null;
   private activeCollisions: Map<string, number> = new Map(); // Track collision start times
   private gameOver = false;
   private coreDeathTimes: Map<string, number> = new Map();
-  private wheelInput: Map<string, number> = new Map();
   private botPlayers: Set<string> = new Set();
   private rocketHold: Map<string, boolean> = new Map();
 
@@ -448,6 +448,8 @@ export class PhysicsEngine {
     const v = Math.max(-1, Math.min(1, value));
     if (v === 0) this.wheelInput.delete(playerId); else this.wheelInput.set(playerId, v);
   }
+
+  // Hinge input is handled entirely within HingeBlock; no physics hook needed
 
   public getAliveCoreOwners(): string[] {
     const alive = new Set<string>();

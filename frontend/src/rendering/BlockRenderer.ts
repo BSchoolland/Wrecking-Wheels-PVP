@@ -36,6 +36,7 @@ export class BlockRenderer {
       const spriteCanvas = this.spriteManager.getSprite(spritesheetName, spriteRow, currentCol, srcW, srcH);
       const scale = this.spriteManager.getScaleFactorFor(spriteCanvas.height);
       const flipX = (body as unknown as { sprite?: { flipX?: boolean } }).sprite?.flipX === true;
+      const flipY = (body as unknown as { sprite?: { flipY?: boolean } }).sprite?.flipY === true;
 
       ctx.save();
       ctx.imageSmoothingEnabled = false;
@@ -44,8 +45,13 @@ export class BlockRenderer {
       if (flipX) {
         ctx.scale(-1, 1);
       }
+      if (flipY) {
+        ctx.scale(1, -1);
+      }
       if (offsetX !== 0 || offsetY !== 0) {
-        ctx.translate(offsetX, offsetY);
+        // When flipY is true, negate offsetY so it's correct in flipped coordinate system
+        const adjustedOffsetY = flipY ? -offsetY : offsetY;
+        ctx.translate(offsetX, adjustedOffsetY);
       }
       
       ctx.scale(scale, scale);

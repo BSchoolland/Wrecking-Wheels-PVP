@@ -5,6 +5,7 @@
 import Matter from 'matter-js';
 import { WORLD_BOUNDS } from '@shared/constants/physics';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
+import type { VehicleClass } from '@/game/contraptions/Contraption';
 
 // Ground constants
 export const GROUND_BLOCK_SIZE = 50;
@@ -106,14 +107,28 @@ export function createMapBoundaries(): Matter.Body[] {
 }
 
 /**
+ * Get grid size for a vehicle class
+ */
+export function getGridSizeForClass(vehicleClass?: VehicleClass): number {
+  if (!vehicleClass) return BUILDER_CONSTANTS.BUILD_GRID_SIZE;
+  const config: Record<VehicleClass, number> = {
+    light: 8,
+    medium: 12,
+    heavy: 16,
+  };
+  return config[vehicleClass];
+}
+
+/**
  * Get spawn position for testing contraptions
  * Positions contraption so its bottom aligns with the top of the ground
  */
-export function getTestSpawnPosition(): { x: number, y: number } {
-  // Calculate spawn Y so bottom of 10x10 grid aligns with ground top
-  // Grid goes from -5 to 4, so bottom cell is at gridY=4
-  // Bottom of that cell is at spawnY + 4.5 * GRID_SIZE
-  const gridHalfSize = BUILDER_CONSTANTS.BUILD_GRID_SIZE / 2;
+export function getTestSpawnPosition(gridSize?: number, vehicleClass?: VehicleClass): { x: number, y: number } {
+  // Calculate spawn Y so bottom of grid aligns with ground top
+  // Grid goes from -halfSize to halfSize-1, so bottom cell is at gridY=halfSize-1
+  // Bottom of that cell is at spawnY + (halfSize - 0.5) * GRID_SIZE
+  const buildGridSize = gridSize ?? getGridSizeForClass(vehicleClass);
+  const gridHalfSize = buildGridSize / 2;
   const bottomOffset = (gridHalfSize - 0.5) * BUILDER_CONSTANTS.GRID_SIZE;
   const spawnY = GROUND_TOP_Y - bottomOffset;
   

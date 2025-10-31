@@ -5,6 +5,7 @@
 import Matter from 'matter-js';
 import { BaseBlock, AttachmentDirection, PhysicsSpawnResult } from './BaseBlock';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
+import { PHYSICS_CONSTANTS } from '@shared/constants/physics';
 import { InputRegistry } from '@/game/input/InputSystem';
 
 export class RocketBlock extends BaseBlock {
@@ -49,6 +50,7 @@ export class RocketBlock extends BaseBlock {
       RocketBlock.BODY_WIDTH,
       RocketBlock.BODY_HEIGHT,
       {
+        density: PHYSICS_CONSTANTS.BLOCK_DENSITY,
         chamfer: { radius: 6 },
         render: { fillStyle: '#c62828', strokeStyle: '#000', lineWidth: 2 },
       }
@@ -59,6 +61,7 @@ export class RocketBlock extends BaseBlock {
       plateWidth,
       RocketBlock.BODY_HEIGHT,
       {
+        density: PHYSICS_CONSTANTS.BLOCK_DENSITY,
         render: { fillStyle: '#795548', strokeStyle: '#000', lineWidth: 2 },
       }
     );

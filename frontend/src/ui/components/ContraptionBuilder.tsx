@@ -2,19 +2,15 @@
  * Contraption Builder Component
  */
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import Matter from 'matter-js';
 import { Contraption, BlockType, createBlock, blockFromData } from '@/game/contraptions';
 import { BLOCK_METADATA, BLOCKS_ORDER } from '@/game/contraptions';
-import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
-import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
-import { InputController } from '@/game/input/InputSystem';
-import { Renderer } from '@/rendering/Renderer';
+import type { ContraptionSaveData, VehicleClass } from '@/game/contraptions/Contraption';
 import { BlockRenderer } from '@/rendering/BlockRenderer';
 import { SpriteManager } from '@/rendering/SpriteManager';
 import { getTestSpawnPosition, createMapBoundaries } from '@/game/terrain/MapLoader';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
-import { WORLD_BOUNDS } from '@shared/constants/physics';
 import { Camera } from '@/core/Camera';
 import './ContraptionBuilder.css';
 
@@ -23,19 +19,23 @@ interface ContraptionBuilderProps {
   onTestStart: (contraption: ContraptionSaveData) => void;
 }
 
+const VEHICLE_CLASS_CONFIG: Record<VehicleClass, { energyLimit: number; gridSize: number }> = {
+  light: { energyLimit: 10, gridSize: 8 },
+  medium: { energyLimit: 15, gridSize: 12 },
+  heavy: { energyLimit: 25, gridSize: 16 },
+};
+
 export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderProps) {
-  const [contraption, setContraption] = useState(() => new Contraption());
+  const [selectedClass, setSelectedClass] = useState<VehicleClass>('medium');
+  const [contraption, setContraption] = useState(() => new Contraption('', 'Unnamed Contraption', 1, 'default', false, 'medium'));
   const [selectedBlock, setSelectedBlock] = useState<BlockType>('core');
   const [showLoadModal, setShowLoadModal] = useState(false);
-  const [isMouseDown, setIsMouseDown] = useState(false);
+  const [showClassChangeModal, setShowClassChangeModal] = useState(false);
+  const [pendingClass, setPendingClass] = useState<VehicleClass | null>(null);
   const [mouseButton, setMouseButton] = useState<'left' | 'right' | undefined>(undefined);
   
-  const canvasRef = useRef<HTMLCanvasElement>(null);
   const builderCanvasRef = useRef<HTMLCanvasElement>(null);
-  const physicsRef = useRef<PhysicsEngine | null>(null);
-  const rendererRef = useRef<Renderer | null>(null);
   const cameraRef = useRef<Camera | null>(null);
-  const animationFrameRef = useRef<number | null>(null);
   const mouseDownInfoRef = useRef<{ x: number; y: number; time: number; gridX: number; gridY: number; button?: 'left' | 'right' } | null>(null);
   const placedOnMouseDownRef = useRef<boolean>(false);
   const suppressPlacementThisClickRef = useRef<boolean>(false);
@@ -47,6 +47,13 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
 
   const hasCore = contraption.hasCore();
   const isCoreDisabled = hasCore;  // Disable button if core already exists (can't place second)
+
+  // Class-based helpers
+  const getGridSize = () => VEHICLE_CLASS_CONFIG[selectedClass].gridSize;
+  const getEnergyLimit = () => VEHICLE_CLASS_CONFIG[selectedClass].energyLimit;
+  const getCurrentEnergy = () => {
+    return contraption.getAllBlocks().reduce((sum, b) => sum + b.energyCost, 0);
+  };
 
   // Helpers
   const getGridCoords = (e: React.MouseEvent<HTMLCanvasElement>, canvas: HTMLCanvasElement) => {
@@ -62,14 +69,14 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
     const gridSize = BUILDER_CONSTANTS.GRID_SIZE;
     const halfSize = gridSize / 2;
     
-    // Get spawn position to know where grid center is
-    const spawnPos = getTestSpawnPosition();
+    // Get spawn position to know where grid center is (using class-based grid size)
+    const buildGridSize = getGridSize();
+    const spawnPos = getTestSpawnPosition(buildGridSize);
     const gridX = Math.floor((worldPos.x - spawnPos.x + halfSize) / gridSize);
     const gridY = Math.floor((worldPos.y - spawnPos.y + halfSize) / gridSize);
     
     // Check if within build area
-    const buildSize = BUILDER_CONSTANTS.BUILD_GRID_SIZE;
-    const halfBuild = buildSize / 2;
+    const halfBuild = buildGridSize / 2;
     const inBounds = gridX >= -halfBuild && gridX < halfBuild && gridY >= -halfBuild && gridY < halfBuild;
     
     return { x, y, gridX, gridY, offsetX: spawnPos.x, offsetY: spawnPos.y, gridSize, inBounds };
@@ -87,7 +94,6 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
     const canvas = builderCanvasRef.current;
     if (!canvas) return;
 
-    setIsMouseDown(true);
     let buttonType: 'left' | 'right' | undefined = undefined;
     if (e.button === 0) {
       buttonType = 'left';
@@ -119,7 +125,6 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
   const handleGridMouseUp = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = builderCanvasRef.current;
     if (!canvas) {
-      setIsMouseDown(false);
       setMouseButton(undefined);
       return;
     }
@@ -150,7 +155,6 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
       }
     }
 
-    setIsMouseDown(false);
     setMouseButton(undefined);
     mouseDownInfoRef.current = null;
     suppressPlacementThisClickRef.current = false;
@@ -177,9 +181,15 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
       if (selectedBlock === 'core' && contraption.hasCore()) {
         return;
       }
+      // Check energy limit before placing
       const block = createBlock(selectedBlock, gridX, gridY);
+      const currentEnergy = getCurrentEnergy();
+      const energyLimit = getEnergyLimit();
+      if (currentEnergy + block.energyCost > energyLimit) {
+        return; // Exceeds energy limit
+      }
       if (contraption.addBlock(block)) {
-        const newContraption = new Contraption(contraption.id, contraption.name);
+        const newContraption = new Contraption(contraption.id, contraption.name, contraption.direction, contraption.team, contraption.isBot, contraption.vehicleClass);
         contraption.getAllBlocks().forEach(b => newContraption.addBlock(b));
         setContraption(newContraption);
         clearSelection();
@@ -188,7 +198,7 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
     } else if (usedButton === 'right') {
       // Delete block at position
       contraption.removeBlockAt(gridX, gridY);
-      const newContraption = new Contraption(contraption.id, contraption.name);
+      const newContraption = new Contraption(contraption.id, contraption.name, contraption.direction, contraption.team, contraption.isBot, contraption.vehicleClass);
       contraption.getAllBlocks().forEach(b => newContraption.addBlock(b));
       setContraption(newContraption);
       if (selectedCell && selectedCell.x === gridX && selectedCell.y === gridY) clearSelection();
@@ -204,7 +214,7 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
   const deleteSelected = () => {
     if (!selectedCell) return;
     contraption.removeBlockAt(selectedCell.x, selectedCell.y);
-    const newContraption = new Contraption(contraption.id, contraption.name);
+    const newContraption = new Contraption(contraption.id, contraption.name, contraption.direction, contraption.team, contraption.isBot, contraption.vehicleClass);
     contraption.getAllBlocks().forEach(b => newContraption.addBlock(b));
     setContraption(newContraption);
     clearSelection();
@@ -215,7 +225,7 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
     const block = getBlockAt(selectedCell.x, selectedCell.y);
     if (!block) return;
     block.rotation = ((block.rotation || 0) + Math.PI / 2) % (Math.PI * 2);
-    const newContraption = new Contraption(contraption.id, contraption.name);
+    const newContraption = new Contraption(contraption.id, contraption.name, contraption.direction, contraption.team, contraption.isBot, contraption.vehicleClass);
     contraption.getAllBlocks().forEach(b => newContraption.addBlock(b));
     setContraption(newContraption);
   };
@@ -246,8 +256,9 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
     Matter.World.add(world, groundBodies);
 
     // Add contraption bodies
-    const spawnPos = getTestSpawnPosition();
-    const previewContraption = new Contraption(contraption.id, contraption.name);
+    const buildGridSize = getGridSize();
+    const spawnPos = getTestSpawnPosition(buildGridSize);
+    const previewContraption = new Contraption(contraption.id, contraption.name, contraption.direction, contraption.team, contraption.isBot, contraption.vehicleClass);
     contraption.getAllBlocks().forEach(b => previewContraption.addBlock(b));
     const { bodies, constraints } = previewContraption.buildPhysics(spawnPos.x, spawnPos.y);
     if (bodies.length) Matter.World.add(world, bodies);
@@ -266,7 +277,7 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
     
     // Draw grid overlay
     const gridSize = BUILDER_CONSTANTS.GRID_SIZE;
-    const buildSize = BUILDER_CONSTANTS.BUILD_GRID_SIZE;
+    const buildSize = buildGridSize;
     const halfBuild = buildSize / 2;
     const halfCell = gridSize / 2;
     
@@ -326,7 +337,6 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
 
   // Test contraption with physics (trigger UI to show test canvas)
   const testContraption = () => {
-    console.log('[Builder] Starting test...');
     // Save contraption to pass to test view
     const saved = contraption.save();
     sessionStorage.setItem('tested-contraption', JSON.stringify(saved));
@@ -362,6 +372,12 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
   // Load a contraption
   const loadContraption = (data: ContraptionSaveData) => {
     const loaded = Contraption.load(data, blockFromData);
+    // Set class if it's different
+    const targetClass = loaded.vehicleClass || 'medium';
+    if (targetClass !== selectedClass) {
+      setSelectedClass(targetClass);
+    }
+    // Set the contraption
     setContraption(loaded);
     setShowLoadModal(false);
     clearSelection();
@@ -381,6 +397,47 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
     URL.revokeObjectURL(url);
   };
 
+  // Handle class change with confirmation
+  const handleClassChange = (newClass: VehicleClass) => {
+    if (newClass === selectedClass) return;
+    
+    const hasBlocks = contraption.getAllBlocks().length > 0;
+    if (hasBlocks) {
+      setPendingClass(newClass);
+      setShowClassChangeModal(true);
+    } else {
+      setSelectedClass(newClass);
+    }
+  };
+
+  const confirmClassChange = () => {
+    if (pendingClass) {
+      setSelectedClass(pendingClass);
+      setShowClassChangeModal(false);
+      setPendingClass(null);
+      // Clear contraption and reset camera when class changes
+      setContraption(new Contraption('', 'Unnamed Contraption', 1, 'default', false, pendingClass));
+      clearSelection();
+      
+      // Update camera
+      if (cameraRef.current) {
+        const buildGridSize = VEHICLE_CLASS_CONFIG[pendingClass].gridSize;
+        const spawnPos = getTestSpawnPosition(buildGridSize);
+        cameraRef.current.x = spawnPos.x;
+        cameraRef.current.y = spawnPos.y;
+        const canvas = builderCanvasRef.current;
+        if (canvas) {
+          cameraRef.current.setZoom(1);
+        }
+      }
+    }
+  };
+
+  const cancelClassChange = () => {
+    setShowClassChangeModal(false);
+    setPendingClass(null);
+  };
+
   // Initialize builder camera and resize handling
   useEffect(() => {
     const canvas = builderCanvasRef.current;
@@ -397,16 +454,20 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
       cameraRef.current = new Camera({ canvas });
       cameraRef.current.setControlsEnabled(false);
       // Center camera on spawn position
-      const spawnPos = getTestSpawnPosition();
+      const buildGridSize = getGridSize();
+      const spawnPos = getTestSpawnPosition(buildGridSize);
       cameraRef.current.x = spawnPos.x;
       cameraRef.current.y = spawnPos.y;
-      // Set zoom to focus on build grid (10x10 grid + padding)
+      // Set zoom to focus on build grid
       const gridSize = BUILDER_CONSTANTS.GRID_SIZE;
-      const buildSize = BUILDER_CONSTANTS.BUILD_GRID_SIZE;
-      const gridWorldSize = buildSize * gridSize + gridSize * 2; // grid + 1 cell padding each side
+      const gridWorldSize = buildGridSize * gridSize + gridSize * 2; // grid + 1 cell padding each side
       const scaleX = canvas.width / gridWorldSize;
       const scaleY = canvas.height / gridWorldSize;
-      cameraRef.current.setZoom(Math.min(scaleX, scaleY) * 3.5);
+      // Higher zoom = more zoomed in. For larger grids, we need less zoom to fit them on screen
+      // Adjust zoom inversely with grid size to keep similar visual size
+      const baseZoom = Math.min(scaleX, scaleY) * 3.5;
+      const gridRatio = 10 / buildGridSize; // Normalize to original 10x10 grid (inverse ratio)
+      cameraRef.current.setZoom(baseZoom * gridRatio);
       resizeCanvas();
     }
 
@@ -418,38 +479,10 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
     if (builderCanvasRef.current && cameraRef.current) {
       renderBuilder();
     }
-  }, [contraption, selectedBlock, selectedCell]);
-
-  // Re-render builder when exiting test mode
-  useEffect(() => {
-    const canvas = builderCanvasRef.current;
-    if (!canvas) return;
-
-    const resizeCanvas = () => {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-      cameraRef.current?.onResize();
-      renderBuilder();
-    };
-
-    if (!cameraRef.current) {
-      cameraRef.current = new Camera({ canvas });
-      cameraRef.current.setControlsEnabled(false);
-      const spawnPos = getTestSpawnPosition();
-      cameraRef.current.x = spawnPos.x;
-      cameraRef.current.y = spawnPos.y;
-      const gridSize = BUILDER_CONSTANTS.GRID_SIZE;
-      const buildSize = BUILDER_CONSTANTS.BUILD_GRID_SIZE;
-      const gridWorldSize = buildSize * gridSize + gridSize * 2;
-      const scaleX = canvas.width / gridWorldSize;
-      const scaleY = canvas.height / gridWorldSize;
-      cameraRef.current.setZoom(Math.min(scaleX, scaleY) * 3.5);
-      resizeCanvas();
-    }
-  }, []);
+  }, [contraption, selectedBlock, selectedCell, selectedClass]);
 
   // Map each block type to a sprite row/size from the blocks spritesheet
-  const getIconSpriteConfig = (type: BlockType): { row: number; width?: number; height?: number } => {
+  const getIconSpriteConfig = (type: BlockType): { row: number; column?: number; width?: number; height?: number } => {
     switch (type) {
       case 'simple': return { row: 0 };
       case 'core': return { row: 1 };
@@ -458,6 +491,7 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
       case 'gray': return { row: 4 };
       case 'rocket': return { row: 5, width: 16, height: 8 }; // rocket is 16x8 on sheet
       case 'tnt': return { row: 6 };
+      case 'hinge': return { row: 8, column: 1 };
       default: return { row: 0 };
     }
   };
@@ -468,7 +502,7 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
     const urls: Partial<Record<BlockType, string>> = {};
     (BLOCKS_ORDER as BlockType[]).forEach((type) => {
       const cfg = getIconSpriteConfig(type);
-      const spriteCanvas = manager.getSprite('blocks', cfg.row, 0, cfg.width, cfg.height);
+      const spriteCanvas = manager.getSprite('blocks', cfg.row, cfg.column ?? 0, cfg.width, cfg.height);
       urls[type] = spriteCanvas.toDataURL();
     });
     setIconUrls(urls);
@@ -483,19 +517,21 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
     });
   }, []);
 
+  const loadContraptionCallback = useCallback(loadContraption, []);
+
   useEffect(() => {
-    // Load tested contraption if returning from test mode
+    // Load tested contraption when component becomes visible (on return from testing)
     const tested = sessionStorage.getItem('tested-contraption');
     if (tested) {
       try {
         const data = JSON.parse(tested);
-        loadContraption(data);
+        loadContraptionCallback(data);
         sessionStorage.removeItem('tested-contraption');
       } catch (e) {
-        console.error('Failed to load tested contraption:', e);
+        console.error('[ContraptionBuilder] Failed to load tested contraption:', e);
       }
     }
-  }, []);
+  }, [loadContraptionCallback]); // Re-check when returning from test view
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -548,11 +584,6 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
     return contraption.getAllBlocks().filter(b => b.type === type).length;
   };
 
-  const getTotalEnergy = (): { raw: number; rounded: number } => {
-    const raw = contraption.getAllBlocks().reduce((sum, b) => sum + b.energyCost, 0);
-    return { raw, rounded: Math.ceil(raw) };
-  };
-
   return (
     <div className="contraption-builder">
       <canvas
@@ -570,8 +601,51 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
           <button onClick={onBack}>Back to Menu</button>
         </div>
         
+        <div className="class-selector" style={{ 
+          position: 'absolute', 
+          top: '12px', 
+          left: '50%', 
+          transform: 'translateX(-50%)',
+          display: 'flex', 
+          gap: '8px', 
+          padding: '8px', 
+          pointerEvents: 'auto',
+          zIndex: 2
+        }}>
+          {(['light', 'medium', 'heavy'] as VehicleClass[]).map((cls) => {
+            const isActive = selectedClass === cls;
+            return (
+              <button
+                key={cls}
+                onClick={() => handleClassChange(cls)}
+                className="class-selector-button"
+                style={{
+                  padding: '9px 13px',
+                  background: isActive 
+                    ? 'linear-gradient(180deg, var(--accent-400), var(--accent-500))'
+                    : 'linear-gradient(180deg, var(--plate-700), var(--plate-800))',
+                  color: isActive ? '#fff' : '#f2f2f2',
+                  border: `1px solid ${isActive ? 'rgba(198,120,26,0.8)' : 'rgba(0,0,0,0.6)'}`,
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontWeight: isActive ? 'bold' : 'normal',
+                  boxShadow: isActive 
+                    ? 'inset 0 1px 0 rgba(255,255,255,0.15), 0 4px 12px rgba(0,0,0,0.45), 0 0 0 2px rgba(226,142,29,0.28)'
+                    : 'inset 0 1px 0 rgba(255,255,255,0.05), 0 2px 6px rgba(0,0,0,0.35)',
+                  textShadow: '0 1px 0 rgba(0,0,0,0.5)',
+                  transition: 'all 120ms ease',
+                  fontSize: '14px',
+                  textTransform: 'capitalize'
+                }}
+              >
+                {cls}
+              </button>
+            );
+          })}
+        </div>
+        
         <div className="energy-display">
-          Energy: {getTotalEnergy().raw.toFixed(2)} {'->'} {Math.ceil(Number(getTotalEnergy().raw.toFixed(2)))}
+          Energy: {getCurrentEnergy().toFixed(2)} / {getEnergyLimit()}
         </div>
         
         {/* Bottom hotbar */}
@@ -612,7 +686,7 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
         {selectionMenuPos && (
           <div
             className="selection-menu"
-            style={{ position: 'fixed', left: selectionMenuPos.left, top: selectionMenuPos.top, background: '#fff', border: '1px solid #ccc', borderRadius: 4, boxShadow: '0 2px 6px rgba(0,0,0,0.15)', padding: 6, zIndex: 2 }}
+            style={{ position: 'fixed', left: selectionMenuPos.left, top: selectionMenuPos.top, background: '#fff', border: '1px solid #ccc', borderRadius: 4, boxShadow: '0 2px 6px rgba(0,0,0,0.15)', padding: 6, zIndex: 2, pointerEvents: 'auto' }}
             onMouseDown={e => e.stopPropagation()}
           >
             <button onClick={deleteSelected} style={{ display: 'block', marginBottom: 4 }}>Delete</button>
@@ -627,13 +701,30 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
             <h3>Load Contraption</h3>
             <div className="contraption-list">
               {getSavedContraptions().map((data) => (
-                <div key={data.id} className="contraption-item" onClick={() => loadContraption(data)}>
+                <div key={data.id} className="contraption-item" onClick={() => loadContraptionCallback(data)}>
                   <div className="contraption-name">{data.name}</div>
                   <div className="contraption-info">{data.blocks.length} blocks</div>
                 </div>
               ))}
             </div>
             <button onClick={() => setShowLoadModal(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {showClassChangeModal && (
+        <div className="load-modal-overlay" onClick={cancelClassChange}>
+          <div className="load-modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Change Vehicle Class?</h3>
+            <p style={{ margin: '16px 0', color: '#ececec' }}>
+              Changing the vehicle class will clear all blocks in your current contraption. Are you sure you want to continue?
+            </p>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+              <button onClick={cancelClassChange}>Cancel</button>
+              <button onClick={confirmClassChange} style={{ background: 'linear-gradient(180deg, var(--accent-400), var(--accent-500))' }}>
+                Confirm
+              </button>
+            </div>
           </div>
         </div>
       )}

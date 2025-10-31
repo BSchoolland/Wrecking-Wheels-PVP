@@ -7,6 +7,8 @@ import { BaseBlock } from './blocks/BaseBlock';
 import type { BlockData, AttachmentDirection } from './blocks/BaseBlock';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 
+export type VehicleClass = 'light' | 'medium' | 'heavy';
+
 export interface ContraptionSaveData {
   id: string;
   name: string;
@@ -14,6 +16,7 @@ export interface ContraptionSaveData {
   direction?: number; // 1 = right (default), -1 = left (mirrored)
   team?: string; // Team identifier for friendly fire prevention
   isBot?: boolean;
+  vehicleClass?: VehicleClass;
   }
 export let CONTRAPTION_DEBUG = false;
 export function setContraptionDebug(value: boolean) { CONTRAPTION_DEBUG = value; }
@@ -31,13 +34,15 @@ export class Contraption {
   direction: number; // 1 = right (default), -1 = left (mirrored)
   team: string; // Team identifier for friendly fire prevention
   isBot: boolean;
+  vehicleClass?: VehicleClass;
   
-  constructor(id: string = '', name: string = 'Unnamed Contraption', direction: number = 1, team: string = 'default', isBot: boolean = false) {
+  constructor(id: string = '', name: string = 'Unnamed Contraption', direction: number = 1, team: string = 'default', isBot: boolean = false, vehicleClass?: VehicleClass) {
     this.id = id || `contraption-${Date.now()}`;
     this.name = name;
     this.direction = direction;
     this.team = team;
     this.isBot = isBot;
+    this.vehicleClass = vehicleClass;
     this.blocks = new Map();
   }
   
@@ -167,20 +172,32 @@ export class Contraption {
           (body as unknown as { block?: BaseBlock }).block = block;
         }
         // Apply sprite data if body has spriteRow defined, or if it's the primary body
-        const bodyWithSprite = body as unknown as { spriteRow?: number };
+        const bodyWithSprite = body as unknown as { spriteRow?: number; flipY?: boolean; spriteOffsetX?: number; spriteOffsetY?: number };
         const spriteRow = bodyWithSprite.spriteRow ?? (body === result.primaryBody ? block.getSpriteRow() : undefined);
         if (spriteRow !== undefined) {
           const sheet = block.getSpritesheetName();
           if (sheet) {
-            // Apply offset only to primary body; secondary bodies don't need offset
-            const isSecondaryBody = body !== result.primaryBody;
+            // Apply offset: use body-specific offsets if defined, otherwise use block defaults for primary body
+            let offsetX = 0;
+            let offsetY = 0;
+            if (bodyWithSprite.spriteOffsetX !== undefined) {
+              offsetX = bodyWithSprite.spriteOffsetX;
+            } else if (body === result.primaryBody) {
+              offsetX = block.getSpriteOffset().x;
+            }
+            if (bodyWithSprite.spriteOffsetY !== undefined) {
+              offsetY = bodyWithSprite.spriteOffsetY;
+            } else if (body === result.primaryBody) {
+              offsetY = block.getSpriteOffset().y;
+            }
             const size = block.getSpriteSize();
-            (body as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; flipX?: boolean; width?: number; height?: number } }).sprite = {
+            (body as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; flipX?: boolean; flipY?: boolean; width?: number; height?: number } }).sprite = {
               sheet,
               row: spriteRow,
-              offsetX: isSecondaryBody ? 0 : block.getSpriteOffset().x,
-              offsetY: isSecondaryBody ? 0 : block.getSpriteOffset().y,
+              offsetX,
+              offsetY,
               flipX: this.direction === -1,
+              flipY: bodyWithSprite.flipY,
               width: size.width,
               height: size.height,
             };
@@ -234,7 +251,9 @@ export class Contraption {
         if (neighbor && neighbor.getRotatedAttachmentFaces().includes('left')) {
           const neighborBody = bodyMap.get(`${neighbor.gridX},${neighbor.gridY}`);
           if (neighborBody) {
-            const connectionConstraints = block.createConnectionConstraints('right', blockBody, neighborBody, neighbor, this.direction);
+            const myAttachBody = block.getBodyForAttachmentFace('right') || blockBody;
+            const neighborAttachBody = neighbor.getBodyForAttachmentFace('left') || neighborBody;
+            const connectionConstraints = block.createConnectionConstraints('right', myAttachBody, neighborAttachBody, neighbor, this.direction);
             constraints.push(...connectionConstraints);
           }
         }
@@ -246,7 +265,9 @@ export class Contraption {
         if (neighbor && neighbor.getRotatedAttachmentFaces().includes('top')) {
           const neighborBody = bodyMap.get(`${neighbor.gridX},${neighbor.gridY}`);
           if (neighborBody) {
-            const connectionConstraints = block.createConnectionConstraints('bottom', blockBody, neighborBody, neighbor, this.direction);
+            const myAttachBody = block.getBodyForAttachmentFace('bottom') || blockBody;
+            const neighborAttachBody = neighbor.getBodyForAttachmentFace('top') || neighborBody;
+            const connectionConstraints = block.createConnectionConstraints('bottom', myAttachBody, neighborAttachBody, neighbor, this.direction);
             constraints.push(...connectionConstraints);
           }
         }
@@ -282,6 +303,7 @@ export class Contraption {
       direction: this.direction,
       team: this.team,
       isBot: this.isBot,
+      vehicleClass: this.vehicleClass,
     };
   }
   
@@ -289,7 +311,7 @@ export class Contraption {
    * Load contraption from JSON
    */
   static load(data: ContraptionSaveData, blockFactory: (data: BlockData) => BaseBlock): Contraption {
-    const contraption = new Contraption(data.id, data.name, data.direction ?? 1, data.team ?? 'default', data.isBot ?? false);
+    const contraption = new Contraption(data.id, data.name, data.direction ?? 1, data.team ?? 'default', data.isBot ?? false, data.vehicleClass);
     data.blocks.forEach(blockData => {
       const block = blockFactory(blockData);
       contraption.addBlock(block);

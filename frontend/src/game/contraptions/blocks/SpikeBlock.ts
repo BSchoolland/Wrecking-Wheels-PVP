@@ -5,6 +5,7 @@
 import Matter from 'matter-js';
 import { BaseBlock, AttachmentDirection, PhysicsSpawnResult } from './BaseBlock';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
+import { PHYSICS_CONSTANTS } from '@shared/constants/physics';
 
 export class SpikeBlock extends BaseBlock {
   static readonly BODY_OFFSET = -5; // Shift to align attachment face with grid
@@ -68,6 +69,7 @@ export class SpikeBlock extends BaseBlock {
       [vertices],
       { 
         label: this.id,
+        density: PHYSICS_CONSTANTS.BLOCK_DENSITY,
         render: { fillStyle: '#e91e63', strokeStyle: '#000', lineWidth: 2 }
       }
     );

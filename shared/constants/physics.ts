@@ -17,6 +17,9 @@ export const PHYSICS_CONSTANTS = {
   
   // Gameplay
   DEPLOYMENT_BUILD_TIME: 1000, // ms - how long it takes to construct a contraption
+  
+  // Physics - Block density
+  BLOCK_DENSITY: 0.002, // Default density for all block bodies
 } as const;
 
 export const WORLD_BOUNDS = {

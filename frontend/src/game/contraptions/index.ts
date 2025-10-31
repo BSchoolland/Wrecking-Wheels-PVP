@@ -17,6 +17,7 @@ import { SpikeBlock } from './blocks/SpikeBlock';
 import { GrayBlock } from './blocks/GrayBlock';
 import { TNTBlock } from './blocks/TNTBlock';
 import { RocketBlock } from './blocks/RocketBlock';
+import { HingeBlock } from './blocks/Hinge';
 
 // Registry mapping type -> constructor; `BlockType` derives from keys
 const BLOCK_REGISTRY = {
@@ -27,6 +28,7 @@ const BLOCK_REGISTRY = {
   gray: GrayBlock,
   tnt: TNTBlock,
   rocket: RocketBlock,
+  hinge: HingeBlock,
 } as const;
 
 export type BlockType = keyof typeof BLOCK_REGISTRY;
@@ -40,11 +42,12 @@ export const BLOCK_METADATA: Readonly<Record<BlockType, { label: string; key: st
   gray: { label: 'Gray', key: '5' },
   tnt: { label: 'TNT', key: '6' },
   rocket: { label: 'Rocket', key: '7' },
+  hinge: { label: 'Hinge', key: '8' },
 } as const;
 
 // Ordered palette for consistent display
 export const BLOCKS_ORDER: Readonly<BlockType[]> = [
-  'core', 'simple', 'wheel', 'spike', 'gray', 'tnt', 'rocket'
+  'core', 'simple', 'wheel', 'spike', 'gray', 'tnt', 'rocket', 'hinge'
 ] as const;
 
 export function createBlock(type: BlockType, gridX: number, gridY: number): BaseBlock {

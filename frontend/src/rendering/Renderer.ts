@@ -4,7 +4,6 @@
  */
 
 import type { GameState } from '@shared/types/GameState';
-import { WORLD_BOUNDS } from '@shared/constants/physics';
 import { Camera } from '@/core/Camera';
 import { EffectManager } from './EffectManager';
 import type * as Matter from 'matter-js';

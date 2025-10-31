@@ -1,5 +1,4 @@
 import { useEffect, useRef } from 'react';
-import Matter from 'matter-js';
 import { Contraption, blockFromData } from '@/game/contraptions';
 import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
 import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
@@ -7,6 +6,7 @@ import { InputController } from '@/game/input/InputSystem';
 import { Renderer } from '@/rendering/Renderer';
 import { SpriteManager } from '@/rendering/SpriteManager';
 import { getTestSpawnPosition } from '@/game/terrain/MapLoader';
+import './ContraptionTester.css';
 
 interface ContraptionTesterProps {
   contraption: ContraptionSaveData;
@@ -28,6 +28,7 @@ export function ContraptionTester({ contraption: contraptionData, onBack }: Cont
     // Create physics and renderer
     physicsRef.current = new PhysicsEngine();
     rendererRef.current = new Renderer(canvas);
+    rendererRef.current.camera.setZoom(rendererRef.current.camera.zoom / 8);
     physicsRef.current.setEffectManager(rendererRef.current.effects);
     
     rendererRef.current.setPlayerId('local');
@@ -38,8 +39,8 @@ export function ContraptionTester({ contraption: contraptionData, onBack }: Cont
     });
 
     // Build contraption physics
-    const spawnPos = getTestSpawnPosition();
     const loaded = Contraption.load(contraptionData, blockFromData);
+    const spawnPos = getTestSpawnPosition(undefined, loaded.vehicleClass);
     const blocks = loaded.getAllBlocks();
     
     if (blocks.length > 0) {

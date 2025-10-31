@@ -5,6 +5,7 @@
 import Matter from 'matter-js';
 import { BaseBlock, AttachmentDirection, PhysicsSpawnResult } from './BaseBlock';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
+import { PHYSICS_CONSTANTS } from '@shared/constants/physics';
 import { InputRegistry } from '@/game/input/InputSystem';
 
 export class WheelBlock extends BaseBlock {
@@ -54,6 +55,7 @@ export class WheelBlock extends BaseBlock {
       WheelBlock.ATTACHMENT_HEIGHT,
       { 
         label: `${this.id}-attach`,
+        density: PHYSICS_CONSTANTS.BLOCK_DENSITY,
         render: { fillStyle: '#795548', strokeStyle: '#000', lineWidth: 2 },
         collisionFilter: {
           group
@@ -69,6 +71,7 @@ export class WheelBlock extends BaseBlock {
       WheelBlock.WHEEL_RADIUS,
       { 
         friction: 0.8,
+        density: PHYSICS_CONSTANTS.BLOCK_DENSITY,
         label: `${this.id}-wheel`,
         render: { fillStyle: '#555', strokeStyle: '#000', lineWidth: 2 },
         collisionFilter: {
@@ -100,7 +103,7 @@ export class WheelBlock extends BaseBlock {
       pointA: { x: 0, y: WheelBlock.ATTACHMENT_HEIGHT / 2 + WheelBlock.WHEEL_RADIUS },
       pointB: { x: 0, y: 0 },
       length: 0,
-      stiffness: 1,
+      stiffness: 0.9,
     });
     
     return {

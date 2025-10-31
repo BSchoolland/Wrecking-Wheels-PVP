@@ -5,6 +5,7 @@
 import Matter from 'matter-js';
 import { BaseBlock, AttachmentDirection, PhysicsSpawnResult } from './BaseBlock';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
+import { PHYSICS_CONSTANTS } from '@shared/constants/physics';
 
 export class CoreBlock extends BaseBlock {
   constructor(id: string, gridX: number, gridY: number) {
@@ -33,6 +34,7 @@ export class CoreBlock extends BaseBlock {
       BUILDER_CONSTANTS.BLOCK_SIZE,
       { 
         label: this.id,
+        density: PHYSICS_CONSTANTS.BLOCK_DENSITY,
         render: { fillStyle: '#ff9800', strokeStyle: '#000', lineWidth: 2 }
       }
     );

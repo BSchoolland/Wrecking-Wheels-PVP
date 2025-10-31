@@ -112,6 +112,17 @@ export abstract class BaseBlock {
   abstract createPhysicsBodies(worldX: number, worldY: number, direction?: number): PhysicsSpawnResult;
 
   /**
+   * Get the body to use for a specific attachment face
+   * Blocks with multiple bodies can override this to return the appropriate body
+   * Default returns the primary body
+   */
+  getBodyForAttachmentFace(_face: AttachmentDirection): Matter.Body | undefined {
+    // Default: return undefined to signal that the calling code should use primaryBody
+    // Subclasses with multiple attachment-specific bodies should override this
+    return undefined;
+  }
+
+  /**
    * Default collision behavior: damage the other block if from a different team
    * and apply a brief separating knockback force to both bodies.
    * Accepts a damageType for resistance logic. Use 'sharp' for spikes, 'blunt' for block collisions.
