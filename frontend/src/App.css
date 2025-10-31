@@ -113,9 +113,10 @@
 }
 
 .lobby .info {
-  color: #bdbdbd;
-  font-size: 0.95rem;
-  margin-bottom: 24px;
+  color: #e8e8e8;
+  font-size: 1.75rem;
+  margin-bottom: 32px;
+  font-weight: 600;
 }
 
 .contraption-selection {

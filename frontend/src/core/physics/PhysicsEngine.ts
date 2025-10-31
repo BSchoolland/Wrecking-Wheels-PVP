@@ -4,8 +4,9 @@
  */
 
 import Matter from 'matter-js';
-import { PHYSICS_CONSTANTS } from '@shared/constants/physics';
+import { PHYSICS_CONSTANTS, WORLD_BOUNDS } from '@shared/constants/physics';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
+import { GAME_CONSTANTS } from '@shared/constants/game';
 import type { PhysicsBodyState, Vector2D } from '@shared/types/GameState';
 import { createMapBoundaries } from '@/game/terrain/MapLoader';
 import type { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
@@ -31,6 +32,11 @@ export class PhysicsEngine {
   private coreDeathTimes: Map<string, number> = new Map();
   private botPlayers: Set<string> = new Set();
   private rocketHold: Map<string, boolean> = new Map();
+  
+  // Map shrinking
+  private groundBodies: Matter.Body[] = [];
+  private mapShrinkStartTime: number | null = null;
+  private lastBlockDestroyTime: number | null = null;
 
   constructor() {
     // Create Matter.js engine
@@ -48,6 +54,8 @@ export class PhysicsEngine {
 
   private createBoundaries(): void {
     const boundaries = createMapBoundaries();
+    // Store ground bodies separately for map shrinking
+    this.groundBodies = boundaries.filter(b => b.label === 'ground');
     Matter.World.add(this.world, boundaries);
   }
 
@@ -103,6 +111,54 @@ export class PhysicsEngine {
 
   private getCollisionKey(idA: number, idB: number): string {
     return idA < idB ? `${idA}-${idB}` : `${idB}-${idA}`;
+  }
+
+  /**
+   * Update map shrinking - progressively destroy ground blocks from both edges
+   */
+  private updateMapShrinking(): void {
+    // Initialize shrink start time on first call
+    if (this.mapShrinkStartTime === null) {
+      this.mapShrinkStartTime = Date.now();
+    }
+
+    const now = Date.now();
+    const elapsed = now - this.mapShrinkStartTime;
+    
+    // Check if shrinking should have started
+    if (elapsed < GAME_CONSTANTS.MAP_SHRINK_START_MS) {
+      return; // Not time to start yet
+    }
+
+    // Get remaining bodies still in the world
+    const remainingBodies = this.groundBodies.filter(b => this.world.bodies.includes(b));
+    
+    if (remainingBodies.length === 0) {
+      return; // All blocks already destroyed
+    }
+
+    // Initialize last destroy time on first shrink
+    if (this.lastBlockDestroyTime === null) {
+      this.lastBlockDestroyTime = now;
+    }
+
+    // Check if enough time has passed to destroy the next block
+    if (now - this.lastBlockDestroyTime >= GAME_CONSTANTS.MAP_SHRINK_DESTROY_INTERVAL_MS) {
+      // Sort by distance from center
+      const centerX = WORLD_BOUNDS.WIDTH / 2;
+      const sortedByDistance = remainingBodies
+        .map(body => ({ body, distFromCenter: Math.abs(body.position.x - centerX) }))
+        .sort((a, b) => b.distFromCenter - a.distFromCenter); // Farthest first (edges)
+
+      // Define decay zone: farthest 15% of blocks can randomly decay
+      const decayZoneSize = Math.max(1, Math.ceil(sortedByDistance.length * 0.15));
+      const decayZone = sortedByDistance.slice(0, decayZoneSize);
+
+      // Randomly pick one from the decay zone
+      const randomIndex = Math.floor(Math.random() * decayZone.length);
+      this.bodiesToRemove.add(decayZone[randomIndex].body);
+      this.lastBlockDestroyTime = now;
+    }
   }
 
   private cleanupDeadBlocks(): void {
@@ -183,6 +239,19 @@ export class PhysicsEngine {
         if (contraptionId) affectedContraptions.add(contraptionId);
         
         // Spawn ghost block effect
+        if (this.effects) {
+          this.effects.createGhostBlock(body, block);
+        }
+      }
+      // Destroy core blocks that fall off the map
+      else if (block && (block as unknown as { type?: string }).type === 'core' && body.position.y > WORLD_BOUNDS.HEIGHT + 500) {
+        block.health = 0;
+        const blockId = (body as unknown as { blockId?: string }).blockId;
+        if (blockId) deadBlockIds.add(blockId);
+        this.bodiesToRemove.add(body);
+        const contraptionId = (body as unknown as { contraptionId?: string }).contraptionId;
+        if (contraptionId) affectedContraptions.add(contraptionId);
+        
         if (this.effects) {
           this.effects.createGhostBlock(body, block);
         }
@@ -273,6 +342,7 @@ export class PhysicsEngine {
     // Clean up dead blocks after physics update
     Matter.Events.on(this.engine, 'afterUpdate', () => {
       this.cleanupDeadBlocks();
+      this.updateMapShrinking();
 
       // Update core death timestamps and determine game over
       if (!this.gameOver) {
@@ -414,6 +484,13 @@ export class PhysicsEngine {
    */
   getAllBodies(): Matter.Body[] {
     return Matter.Composite.allBodies(this.world);
+  }
+
+  /**
+   * Enable map shrinking (call when match starts in PVP mode)
+   */
+  enableMapShrinking(): void {
+    this.mapShrinkStartTime = Date.now();
   }
 
   /**

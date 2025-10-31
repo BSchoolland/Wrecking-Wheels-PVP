@@ -41,7 +41,7 @@ export class HingeBlock extends BaseBlock {
   
   constructor(id: string, gridX: number, gridY: number) {
     super(id, 'hinge', gridX, gridY);
-    this.energyCost = 0.5;
+    this.energyCost = 0.8;
   }
 
   getSpritesheetName(): string | undefined {
@@ -279,8 +279,8 @@ export class HingeBlock extends BaseBlock {
     },
     makePayload: (e) => {
       const key = e.key;
-      if (key === 'q' || key === 'Q') return { value: 1 };
-      if (key === 'e' || key === 'E') return { value: -1 };
+      if (key === 'q' || key === 'Q') return { value: -1 };
+      if (key === 'e' || key === 'E') return { value: 1 };
       return undefined;
     }
   });

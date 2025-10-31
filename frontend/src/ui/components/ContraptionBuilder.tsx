@@ -20,9 +20,9 @@ interface ContraptionBuilderProps {
 }
 
 const VEHICLE_CLASS_CONFIG: Record<VehicleClass, { energyLimit: number; gridSize: number }> = {
-  light: { energyLimit: 10, gridSize: 8 },
-  medium: { energyLimit: 15, gridSize: 12 },
-  heavy: { energyLimit: 25, gridSize: 16 },
+  light: { energyLimit: 5, gridSize: 8 },
+  medium: { energyLimit: 10, gridSize: 12 },
+  heavy: { energyLimit: 20, gridSize: 16 },
 };
 
 export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderProps) {
@@ -703,7 +703,7 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
               {getSavedContraptions().map((data) => (
                 <div key={data.id} className="contraption-item" onClick={() => loadContraptionCallback(data)}>
                   <div className="contraption-name">{data.name}</div>
-                  <div className="contraption-info">{data.blocks.length} blocks</div>
+                  <div className="contraption-info">{data.blocks.length} blocks{data.vehicleClass ? ` • ${data.vehicleClass}` : ''}</div>
                 </div>
               ))}
             </div>

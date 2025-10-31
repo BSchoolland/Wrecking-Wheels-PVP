@@ -14,6 +14,7 @@ import type { BlockData } from '@/game/contraptions/blocks/BaseBlock';
 import { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
 import { WORLD_BOUNDS } from '@shared/constants/physics';
 import { InputController, InputRegistry } from '@/game/input/InputSystem';
+import { getTestSpawnPosition } from '@/game/terrain/MapLoader';
 
 // Extended Matter.js types for our use case
 interface ExtendedBody extends Matter.Body {
@@ -188,6 +189,10 @@ export class NetworkedGame {
             const y = 200;
             this.spawnContraption(x, y, this.playerId, this.savedContraption);
           }
+          // Enable map shrinking for PVP match
+          if (this.physics) {
+            this.physics.enableMapShrinking();
+          }
         } else {
           const initCmd: PlayerInitCommand = { type: 'player-init', playerId: this.playerId, contraption: this.savedContraption || undefined };
           this.network.sendCommand(initCmd as unknown as GameCommand);
@@ -332,7 +337,9 @@ export class NetworkedGame {
         `${contraptionData.id}-${Date.now()}`,
         contraptionData.name,
         direction,
-        team
+        team,
+        false,
+        contraptionData.vehicleClass
       );
       
       // Load blocks
@@ -346,8 +353,12 @@ export class NetworkedGame {
         this.physics.registerContraption(contraption);
       }
       
+      // Calculate correct spawn Y based on vehicleClass
+      const spawnPos = getTestSpawnPosition(undefined, contraptionData.vehicleClass);
+      const spawnY = spawnPos.y;
+      
       // Build physics (host only)
-      const { bodies, constraints } = contraption.buildPhysics(clampedX, y);
+      const { bodies, constraints } = contraption.buildPhysics(clampedX, spawnY);
       
       // Only add to physics world on host
       if (this.physics) {
@@ -358,7 +369,7 @@ export class NetworkedGame {
         constraints.forEach(constraint => this.physics!.addConstraint(constraint));
       }
       
-      if (import.meta.env.DEV) console.log('Spawned contraption at', clampedX, y, 'for player', playerId, 'direction', direction);
+      if (import.meta.env.DEV) console.log('Spawned contraption at', clampedX, spawnY, 'for player', playerId, 'direction', direction);
     }, durationMs);
   }
 

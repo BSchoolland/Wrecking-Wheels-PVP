@@ -252,10 +252,8 @@ function App() {
 
           {view === 'lobby' && (
             <div className="lobby">
-              <h2>Lobby: {lobbyId}</h2>
-              <p>Role: <strong>{role === 'host' ? 'Host' : 'Client'}</strong></p>
               <p className="info">
-                {isWaiting ? 'Waiting for another player to join…' : (role === 'host' ? 'Matched! You will host this game.' : 'Matched! Connecting to host...')}
+                {isWaiting ? 'Waiting for another player to join…' : 'Matched!  Waiting for both players to be ready...'}
               </p>
 
               <div className="contraption-selection">
@@ -278,7 +276,7 @@ function App() {
                         onClick={() => setSelectedContraption(data)}
                       >
                         <div className="contraption-name">{data.name}</div>
-                        <div className="contraption-info">{data.blocks?.length || 0} blocks</div>
+                        <div className="contraption-info">{data.blocks?.length || 0} blocks{data.vehicleClass ? ` • ${data.vehicleClass}` : ''}</div>
                       </div>
                     ));
                   })()}
@@ -286,7 +284,7 @@ function App() {
               </div>
 
               <div className="lobby-actions">
-                <button className="btn btn-primary" onClick={startGame} disabled={!selectedContraption || isWaiting}>Start Game</button>
+                <button className="btn btn-primary" onClick={startGame} disabled={!selectedContraption || isWaiting}>Ready</button>
                 <button className="btn btn-secondary" onClick={() => { setView('menu'); setLobbyId(''); setIsWaiting(false); if (pollIntervalRef.current) { window.clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; } void leaveQueueIfWaiting(); }}>
                   Back to Menu
                 </button>
@@ -321,15 +319,6 @@ function App() {
               <p>Returning to menu in 3 seconds...</p>
             </div>
           )}
-          <div className="game-hud">
-            <div className="hud-info">
-              <span>Lobby: {lobbyId}</span>
-              <span>Role: {role}</span>
-              <span>Controls: A drive forward, D reverse</span>
-              <span>Right/Middle Click + Drag: Pan camera</span>
-              <span>Mouse Wheel: Zoom in/out</span>
-            </div>
-          </div>
           <button className="back-button" onClick={stopGame} style={{ position: 'absolute', bottom: 12, right: 12 }}>
             Leave Game
           </button>

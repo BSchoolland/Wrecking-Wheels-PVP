@@ -18,6 +18,7 @@ export interface ContraptionData {
   direction?: number;
   team?: string;
   isBot?: boolean;
+  vehicleClass?: 'light' | 'medium' | 'heavy';
 }
 
 export type GameCommand = 

@@ -134,7 +134,9 @@ export abstract class BaseBlock {
     const myTeam = (myBody as unknown as { team?: string }).team;
     const targetTeam = (otherBody as unknown as { team?: string }).team;
     
-    const isFriendly = targetBlock && myContraptionId && targetContraptionId && myTeam && targetTeam && 
+    // Check if target is friendly - works even if otherBody doesn't have a block reference
+    // (e.g., secondary bodies of multi-body blocks like hinges)
+    const isFriendly = myContraptionId && targetContraptionId && myTeam && targetTeam && 
       (myContraptionId === targetContraptionId || myTeam === targetTeam);
     
     if (isFriendly) {
