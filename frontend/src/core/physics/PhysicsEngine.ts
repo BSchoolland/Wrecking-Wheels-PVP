@@ -28,8 +28,6 @@ export class PhysicsEngine {
   private wheelInput: Map<string, number> = new Map();
   private effects: EffectManager | null = null;
   private activeCollisions: Map<string, number> = new Map(); // Track collision start times
-  private gameOver = false;
-  private coreDeathTimes: Map<string, number> = new Map();
   private botPlayers: Set<string> = new Set();
   private rocketHold: Map<string, boolean> = new Map();
   
@@ -343,30 +341,6 @@ export class PhysicsEngine {
     Matter.Events.on(this.engine, 'afterUpdate', () => {
       this.cleanupDeadBlocks();
       this.updateMapShrinking();
-
-      // Update core death timestamps and determine game over
-      if (!this.gameOver) {
-        const now = Date.now();
-        const bodies = Matter.Composite.allBodies(this.world);
-        const aliveOwners = new Set<string>();
-        bodies.forEach(b => {
-          const block = (b as unknown as { block?: { type?: string; health?: number } }).block;
-          const owner = (b as unknown as { ownerId?: string }).ownerId;
-          if (block && block.type === 'core' && owner) {
-            if ((block.health as number) > 0) aliveOwners.add(owner);
-            if ((block.health as number) <= 0 && !this.coreDeathTimes.has(owner)) this.coreDeathTimes.set(owner, now);
-          }
-        });
-        // If only one owner has alive core or both cores died close together, end game
-        if (this.coreDeathTimes.size > 0) {
-          const times = Array.from(this.coreDeathTimes.values()).sort();
-          if (times.length >= 2 && times[times.length - 1] - times[0] <= 2000) {
-            this.gameOver = true; // tie
-          } else if (aliveOwners.size <= 1) {
-            this.gameOver = true;
-          }
-        }
-      }
     });
     Matter.Runner.run(this.runner, this.engine);
   }
@@ -517,10 +491,6 @@ export class PhysicsEngine {
     Matter.Engine.clear(this.engine);
   }
 
-  isGameOver(): boolean {
-    return this.gameOver;
-  }
-
   public setWheelInput(playerId: string, value: number): void {
     const v = Math.max(-1, Math.min(1, value));
     if (v === 0) this.wheelInput.delete(playerId); else this.wheelInput.set(playerId, v);
@@ -528,21 +498,6 @@ export class PhysicsEngine {
 
   // Hinge input is handled entirely within HingeBlock; no physics hook needed
 
-  public getAliveCoreOwners(): string[] {
-    const alive = new Set<string>();
-    const bodies = Matter.Composite.allBodies(this.world);
-    bodies.forEach(b => {
-      const block = (b as unknown as { block?: { type?: string; health?: number } }).block;
-      const owner = (b as unknown as { ownerId?: string }).ownerId;
-      if (block && block.type === 'core' && block.health > 0 && owner) alive.add(owner);
-    });
-    return Array.from(alive);
-  }
-
-  public getCoreDeathTimes(): Map<string, number> { return new Map(this.coreDeathTimes); }
-
-  public getBaseHp(_side: 'host' | 'client'): number { return 0; }
- 
   public setBot(playerId: string, isBot: boolean): void {
     if (isBot) this.botPlayers.add(playerId); else this.botPlayers.delete(playerId);
   }

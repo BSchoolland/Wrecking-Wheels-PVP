@@ -26,7 +26,8 @@ export type GameCommand =
   | ReadyCommand
   | SpawnBoxCommand
   | PlayerInitCommand
-  | BlockInputCommand;
+  | BlockInputCommand
+  | PlayerReadyCommand;
 
 export interface DeployCommand {
   type: 'deploy';
@@ -62,6 +63,12 @@ export interface BlockInputCommand {
   payload?: { [key: string]: unknown };
 }
 
+export interface PlayerReadyCommand {
+  type: 'player-ready';
+  playerId: string;
+  contraption?: ContraptionData;
+}
+
 /**
  * UI State Update (host -> client, 5-10Hz, reliable)
  */
@@ -74,8 +81,8 @@ export interface UIState {
  * Game Event (host -> client, one-off, reliable)
  */
 export type GameEvent = 
-  | { type: 'game-over'; winner: 'host' | 'client' }
-  | { type: 'player-joined'; playerId: string };
+  | { type: 'player-joined'; playerId: string }
+  | { type: 'countdown-start' };
 
 /**
  * Network message wrapper

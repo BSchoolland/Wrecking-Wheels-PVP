@@ -88,7 +88,5 @@ export interface GameState {
   // Terrain/battlefield state
   terrain: TerrainState;
   
-  // Win condition tracking
-  winner?: string; // player ID if game is over
   matchDuration: number; // seconds elapsed
 }

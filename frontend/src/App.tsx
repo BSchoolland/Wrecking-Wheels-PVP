@@ -9,8 +9,8 @@ import { Renderer } from '@/rendering/Renderer';
 import { WORLD_BOUNDS } from '@shared/constants/physics';
 import { ContraptionBuilder } from '@/ui/components/ContraptionBuilder';
 import { ContraptionTester } from '@/ui/components/ContraptionTester';
-// Decks removed in arena mode
 import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
+import type { PlayerReadyCommand } from '@shared/types/Commands';
 import './App.css';
 
 const initializeDefaults = async () => {
@@ -50,7 +50,6 @@ function App() {
   const [playerId] = useState(`player-${Date.now()}`);
   const [selectedContraption, setSelectedContraption] = useState<ContraptionSaveData | null>(null);
   // Energy/health removed in arena mode
-  const [gameOver, setGameOver] = useState<string | null>(null);
   const [isWaiting, setIsWaiting] = useState(false);
   const [contraptionToTest, setContraptionToTest] = useState<ContraptionSaveData | null>(null);
 
@@ -85,6 +84,17 @@ function App() {
         startPollingForReady(data.lobbyId);
       } else {
         setIsWaiting(false);
+        // Lobby is already ready (both players matched), create NetworkedGame immediately
+        if (canvasRef.current && !gameRef.current) {
+          gameRef.current = new NetworkedGame({
+            canvas: canvasRef.current,
+            role: data.role,
+            lobbyId: data.lobbyId,
+            playerId,
+            contraption: selectedContraption || undefined,
+          });
+          gameRef.current.start();
+        }
       }
     } catch (e) {
       console.error('Queue join failed', e);
@@ -102,6 +112,17 @@ function App() {
         const { lobby } = await res.json();
         if (lobby?.status === 'ready') {
           setIsWaiting(false);
+          // Create NetworkedGame instance when both players are matched (regardless of contraption selection)
+          if (!gameRef.current && canvasRef.current) {
+            gameRef.current = new NetworkedGame({
+              canvas: canvasRef.current,
+              role,
+              lobbyId: id,
+              playerId,
+              contraption: selectedContraption || undefined,
+            });
+            gameRef.current.start();
+          }
           if (pollIntervalRef.current) { window.clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
         }
       } catch {
@@ -124,11 +145,19 @@ function App() {
   };
 
   const startGame = () => {
+    // Send player-ready command when Ready button is clicked
+    if (gameRef.current && selectedContraption) {
+      const readyCmd: PlayerReadyCommand = {
+        type: 'player-ready',
+        playerId,
+        contraption: selectedContraption,
+      };
+      gameRef.current.sendReadyCommand(readyCmd);
+    }
     setView('game');
   };
 
   const stopGame = () => {
-    setGameOver(null);
     if (gameRef.current) {
       gameRef.current.destroy();
       gameRef.current = null;
@@ -147,32 +176,44 @@ function App() {
     selectedRef.current = selectedContraption;
   }, [selectedContraption]);
 
+  // Create NetworkedGame when lobby is ready (regardless of contraption selection)
+  useEffect(() => {
+    if (view === 'lobby' && lobbyId && !isWaiting && canvasRef.current && !gameRef.current) {
+      gameRef.current = new NetworkedGame({
+        canvas: canvasRef.current,
+        role,
+        lobbyId,
+        playerId,
+        contraption: selectedContraption || undefined,
+      });
+      gameRef.current.start();
+    }
+  }, [view, lobbyId, isWaiting, role, playerId]);
+  
+  // Update contraption when selected (if NetworkedGame already exists)
+  useEffect(() => {
+    if (gameRef.current && selectedContraption) {
+      gameRef.current.setSelectedContraption(selectedContraption);
+    }
+  }, [selectedContraption]);
+
   useEffect(() => {
     if (view === 'game' && canvasRef.current && lobbyId && selectedContraption) {
-      // Create networked game instance only once per game start
-      if (!gameRef.current) {
+      // Game view: NetworkedGame should already be created in lobby
+      // Just ensure it's started if it wasn't already
+      if (gameRef.current) {
+        // Update selected contraption if changed
+        gameRef.current.setSelectedContraption(selectedContraption);
+      } else {
+        // Fallback: create if somehow not created in lobby
         gameRef.current = new NetworkedGame({
           canvas: canvasRef.current,
           role,
           lobbyId,
           playerId,
           contraption: selectedContraption,
-          onGameOver: (winner: 'host' | 'client' | 'tie') => {
-            const isWin = winner !== 'tie' && winner === role;
-            const message = winner === 'tie' ? "It's a tie!" : (isWin ? "You win!" : "You Lose :(");
-            setGameOver(message);
-            gameRef.current?.stop();
-            setTimeout(() => {
-              setGameOver(null);
-              stopGame();
-            }, 3000);
-          },
         });
-
         gameRef.current.start();
-      } else {
-        // Update selected contraption
-        gameRef.current.setSelectedContraption(selectedContraption);
       }
       return () => {
         if (view !== 'game' && gameRef.current) {
@@ -226,10 +267,16 @@ function App() {
 
   return (
     <div className="app">
-      {view !== 'game' && (
+      {(view !== 'game' && view !== 'lobby') && (
         <canvas
           ref={bgCanvasRef}
           className="bg-canvas"
+        />
+      )}
+      {(view === 'lobby' || view === 'game') && (
+        <canvas
+          ref={canvasRef}
+          style={{ display: view === 'lobby' ? 'none' : 'block' }}
         />
       )}
       {view !== 'game' && (
@@ -297,28 +344,6 @@ function App() {
       {view === 'game' && (
         <div className="game-container" style={{ position: 'relative' }}>
           <canvas ref={canvasRef}></canvas>
-          {gameOver && (
-            <div 
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                height: '100%',
-                backgroundColor: 'rgba(0, 0, 0, 0.7)',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'center',
-                alignItems: 'center',
-                color: 'white',
-                fontSize: '2em',
-                zIndex: 10
-              }}
-            >
-              <h2>{gameOver}</h2>
-              <p>Returning to menu in 3 seconds...</p>
-            </div>
-          )}
           <button className="back-button" onClick={stopGame} style={{ position: 'absolute', bottom: 12, right: 12 }}>
             Leave Game
           </button>

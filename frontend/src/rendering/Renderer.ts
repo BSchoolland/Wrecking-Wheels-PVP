@@ -54,6 +54,10 @@ export class Renderer {
     this.myPlayerId = playerId;
   }
 
+  getContext(): CanvasRenderingContext2D {
+    return this.ctx;
+  }
+
   private resizeCanvas(): void {
     this.canvas.width = window.innerWidth;
     this.canvas.height = window.innerHeight;
@@ -141,23 +145,6 @@ export class Renderer {
     const minutes = Math.floor(state.matchDuration / 60);
     const seconds = Math.floor(state.matchDuration % 60);
     this.ctx.fillText(`Time: ${minutes}:${seconds.toString().padStart(2, '0')}`, 20, y);
-
-    // Render winner if game is over
-    if (state.winner) {
-      this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
-      this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-      
-      const winner = state.players[state.winner];
-      this.ctx.fillStyle = '#FFFFFF';
-      this.ctx.font = 'bold 48px Arial';
-      this.ctx.textAlign = 'center';
-      this.ctx.fillText(
-        `${winner?.name} Wins!`,
-        this.canvas.width / 2,
-        this.canvas.height / 2
-      );
-      this.ctx.textAlign = 'left';
-    }
   }
 
   private updateBattleCamera(bodies: Matter.Body[], now: number): void {

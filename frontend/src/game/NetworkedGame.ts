@@ -5,7 +5,7 @@
 import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
 import { Renderer } from '@/rendering/Renderer';
 import { NetworkManager, NetworkRole } from '@/core/networking/NetworkManager';
-import type { GameCommand, ContraptionData, UIState, GameEvent, PlayerInitCommand, BlockInputCommand } from '@shared/types/Commands';
+import type { GameCommand, ContraptionData, UIState, GameEvent, BlockInputCommand, PlayerReadyCommand } from '@shared/types/Commands';
 import type { GameState } from '@shared/types/GameState';
 import type * as Matter from 'matter-js';
 import { Contraption, blockFromData } from '@/game/contraptions';
@@ -72,8 +72,6 @@ interface NetworkSnapshot {
   bodies: SerializableBody[];
   effects?: EffectEvent[];
   _receivedAt?: number;
-  baseHostHp?: number;
-  baseClientHp?: number;
 }
 
 interface NetworkedGameConfig {
@@ -81,9 +79,8 @@ interface NetworkedGameConfig {
   role: NetworkRole;
   lobbyId: string;
   playerId: string;
-  contraption: ContraptionSaveData;
+  contraption?: ContraptionSaveData; // Make optional
   onContraptionSpawned?: () => void;
-  onGameOver?: (winner: 'host' | 'client') => void;
 }
 
 export class NetworkedGame {
@@ -128,14 +125,21 @@ export class NetworkedGame {
 
   // Client-side: store latest snapshot for rendering
   private latestSnapshot: NetworkSnapshot | null = null;
-  private gameEnded = false;
-  private onGameOver?: (winner: 'host' | 'client') => void;
 
   // Cooldowns per player (disabled)
   private buildCooldowns: Map<string, number> = new Map();
   
   // Track when both players are connected
   private bothPlayersConnected = false;
+  
+  // Track ready states (host only)
+  private readyStates: Map<string, boolean> = new Map();
+  private bothPlayersReady = false;
+  
+  // Countdown state
+  private countdownActive = false;
+  private countdownValue: number | 'FIGHT' | null = null;
+  private countdownTimeoutId: number | null = null;
   
   public energy: number = 0;
 
@@ -148,9 +152,8 @@ export class NetworkedGame {
     this.canvas = config.canvas;
     this.role = config.role;
     this.playerId = config.playerId;
-    this.savedContraption = config.contraption;
+    this.savedContraption = config.contraption || null;
     this.onContraptionSpawned = config.onContraptionSpawned;
-    this.onGameOver = config.onGameOver;
     
     // No resources
     this.energy = 0;
@@ -166,12 +169,12 @@ export class NetworkedGame {
     // Disable manual camera controls during battle; renderer will follow player
     this.renderer.camera.setControlsEnabled(false);
     
-    // Initialize physics (host only)
+    // Initialize physics (host only) - but don't start yet
     if (this.role === 'host') {
       this.physics = new PhysicsEngine();
       this.physics.setEffectManager(this.renderer.effects);
       this.setupEffectCapture();
-      this.physics.start();
+      // Physics will start in onConnected callback
     }
     
     // Initialize networking
@@ -191,21 +194,11 @@ export class NetworkedGame {
       onEvent: (event) => this.handleEvent(event),
       onConnected: () => { 
         this.bothPlayersConnected = true;
-        // Host spawns own contraption immediately; client informs host of theirs
-        if (this.role === 'host') {
-          if (this.savedContraption) {
-            const x = WORLD_BOUNDS.WIDTH * 0.15;
-            const y = 200;
-            this.spawnContraption(x, y, this.playerId, this.savedContraption);
-          }
-          // Enable map shrinking for PVP match
-          if (this.physics) {
-            this.physics.enableMapShrinking();
-          }
-        } else {
-          const initCmd: PlayerInitCommand = { type: 'player-init', playerId: this.playerId, contraption: this.savedContraption || undefined };
-          this.network.sendCommand(initCmd as unknown as GameCommand);
+        // Start physics when connection is established
+        if (this.role === 'host' && this.physics) {
+          this.physics.start();
         }
+        // Don't spawn vehicles or enable map shrinking here - wait for ready states
       },
       onDisconnected: () => { 
         this.bothPlayersConnected = false;
@@ -217,6 +210,7 @@ export class NetworkedGame {
 
     // Input controller setup
     const sendGeneric = (bindingId: string, phase: 'press' | 'release' | 'change', payload?: { [k: string]: unknown }) => {
+      // Allow inputs to flow normally - physics is paused during countdown anyway
       if (this.role === 'host') {
         const binding = InputRegistry.getById(bindingId);
         const delay = binding?.pressDelayMs || 0;
@@ -231,6 +225,61 @@ export class NetworkedGame {
     };
     this.inputController = new InputController({ role: this.role, playerId: this.playerId, sendCommand: sendGeneric, physics: this.role === 'host' ? this.physics : null, effects: this.renderer.effects });
     this.inputController.attach();
+  }
+
+  /**
+   * Start the countdown sequence (3, 2, 1, FIGHT)
+   */
+  private startCountdown(): void {
+    if (this.countdownActive) return;
+    
+    this.countdownActive = true;
+    this.countdownValue = 3;
+    
+    // Clear any existing timeout
+    if (this.countdownTimeoutId !== null) {
+      window.clearTimeout(this.countdownTimeoutId);
+    }
+    
+    // Pause physics so inputs don't affect the world until game starts
+    if (this.role === 'host' && this.physics) {
+      this.physics.stop();
+    }
+    
+    // First tick: show 3, then after 1 second show 2
+    this.countdownTimeoutId = window.setTimeout(() => {
+      this.countdownValue = 2;
+      // Second tick: show 2, then after 1 second show 1
+      this.countdownTimeoutId = window.setTimeout(() => {
+        this.countdownValue = 1;
+        // Third tick: show 1, then after 1 second show FIGHT
+        this.countdownTimeoutId = window.setTimeout(() => {
+          this.countdownValue = 'FIGHT';
+          // Fourth tick: show FIGHT, then after 1 second enable inputs
+          this.countdownTimeoutId = window.setTimeout(() => {
+            // Countdown complete - resume physics and enable inputs
+            this.countdownActive = false;
+            this.countdownValue = null;
+            this.bothPlayersReady = true;
+            
+            // Resume physics to let inputs take effect
+            if (this.role === 'host' && this.physics) {
+              this.physics.start();
+            }
+            
+            // Enable map shrinking on host
+            if (this.role === 'host' && this.physics) {
+              this.physics.enableMapShrinking();
+            }
+            
+            if (this.countdownTimeoutId !== null) {
+              window.clearTimeout(this.countdownTimeoutId);
+              this.countdownTimeoutId = null;
+            }
+          }, 1000);
+        }, 1000);
+      }, 1000);
+    }, 1000);
   }
 
   /**
@@ -280,20 +329,42 @@ export class NetworkedGame {
   private handleCommand(command: GameCommand): void {
     if (this.role !== 'host' || !this.physics) return;
 
-    if (this.physics.isGameOver()) return;
-
     switch (command.type) {
       case 'player-init':
-        // Spawn client's contraption if provided
+        // Legacy - spawn client's contraption if provided
         if (command.playerId !== this.playerId && command.contraption) {
           const x = WORLD_BOUNDS.WIDTH * 0.85;
           const y = 300;
           this.spawnContraption(x, y, command.playerId, command.contraption);
         }
         break;
+      case 'player-ready':
+        {
+          const c = command as PlayerReadyCommand;
+          // Mark player as ready
+          this.readyStates.set(c.playerId, true);
+          
+          // Spawn vehicle for this player
+          if (c.contraption) {
+            const x = c.playerId === this.playerId ? WORLD_BOUNDS.WIDTH * 0.15 : WORLD_BOUNDS.WIDTH * 0.85;
+            const y = 200;
+            this.spawnContraption(x, y, c.playerId, c.contraption);
+          }
+          
+          // Check if both players are ready
+          const allReady = Array.from(this.readyStates.values()).every(v => v === true) && this.readyStates.size >= 2;
+          if (allReady && !this.countdownActive) {
+            // Start countdown (host will send event to client)
+            this.startCountdown();
+            // Host also sends event to client
+            this.network.sendEvent({ type: 'countdown-start' });
+          }
+        }
+        break;
       case 'block-input':
         {
           const c = command as BlockInputCommand;
+          // Block-inputs always flow to pending inputs (physics is paused during countdown anyway)
           const binding = InputRegistry.getById(c.bindingId);
           const now = Date.now();
           const oneWay = this.network.getEstimatedOneWayMs ? (this.network.getEstimatedOneWayMs() || 0) : 0;
@@ -448,18 +519,17 @@ export class NetworkedGame {
    * Handle game event from host (client only) - Events Channel
    */
   private handleEvent(event: GameEvent): void {
-    if (this.role === 'host') return;
+    if (this.role === 'host') {
+      // Host doesn't receive events from itself
+      return;
+    }
 
     switch (event.type) {
-      case 'game-over':
-        if (!this.gameEnded) {
-          this.gameEnded = true;
-          if (this.onGameOver) {
-            this.onGameOver(event.winner);
-          }
-        }
-        break;
       case 'player-joined':
+        break;
+      case 'countdown-start':
+        // Client receives countdown-start event from host
+        this.startCountdown();
         break;
     }
   }
@@ -534,12 +604,6 @@ export class NetworkedGame {
               if (block && block.maxHealth > 0) {
                 return Math.max(0, Math.min(1, block.health / block.maxHealth));
               }
-              if (body.label === 'base-host') {
-                return this.physics!.getBaseHp('host') / 10;
-              }
-              if (body.label === 'base-client') {
-                return this.physics!.getBaseHp('client') / 10;
-              }
               return undefined;
             })(),
           },
@@ -560,8 +624,6 @@ export class NetworkedGame {
         };
       }),
       effects: this.effectEvents.length > 0 ? [...this.effectEvents] : undefined,
-      baseHostHp: this.physics!.getBaseHp('host'),
-      baseClientHp: this.physics!.getBaseHp('client'),
     };
     
     // Clear effect events after sending
@@ -574,7 +636,6 @@ export class NetworkedGame {
         this.sentBodies.delete(id);
       }
     });
-    
     
     return snapshot;
   }
@@ -591,6 +652,13 @@ export class NetworkedGame {
     if (this.isRunning) return;
     this.isRunning = true;
     this.gameLoop();
+  }
+
+  /**
+   * Check if the game is running
+   */
+  getIsRunning(): boolean {
+    return this.isRunning;
   }
 
   /**
@@ -621,27 +689,6 @@ export class NetworkedGame {
     }
 
     // No periodic resource updates
-
-    // Detect game over on host
-    if (this.role === 'host' && this.physics && !this.gameEnded && this.physics.isGameOver()) {
-      this.gameEnded = true;
-      const hostHp = this.physics.getBaseHp('host');
-      const clientHp = this.physics.getBaseHp('client');
-      let winner: 'host' | 'client' | null = null;
-      if (clientHp <= 0) {
-        winner = 'host';
-      } else if (hostHp <= 0) {
-        winner = 'client';
-      }
-      
-      // Send game-over event via events channel
-      if (winner) {
-        this.network.sendEvent({ type: 'game-over', winner });
-        if (this.onGameOver) {
-          this.onGameOver(winner);
-        }
-      }
-    }
 
     // Host: sync physics state to client periodically (20Hz)
     if (this.role === 'host' && this.network.isConnected()) {
@@ -686,8 +733,54 @@ export class NetworkedGame {
       this.renderer.renderPhysics(bodies as Matter.Body[]);
     }
 
+    // Render countdown overlay
+    this.renderCountdown();
+
     this.animationFrameId = requestAnimationFrame(this.gameLoop);
   };
+
+  /**
+   * Render countdown overlay
+   */
+  private renderCountdown(): void {
+    if (!this.countdownValue) return;
+    
+    const ctx = this.renderer.getContext();
+    const width = this.canvas.width;
+    const height = this.canvas.height;
+    
+    // Save context (countdown is rendered in screen space, not world space)
+    ctx.save();
+    
+    // Reset camera transform for screen-space rendering
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    
+    // Set up text styling
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const fontSize = Math.min(width, height) * 0.15;
+    ctx.font = `bold ${fontSize}px Arial`;
+    
+    // Add text shadow for better visibility
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+    ctx.shadowBlur = 20;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    
+    // Draw countdown text
+    if (typeof this.countdownValue === 'number') {
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(this.countdownValue.toString(), width / 2, height / 2);
+    } else if (this.countdownValue === 'FIGHT') {
+      ctx.fillStyle = '#ff0000';
+      const fightFontSize = Math.min(width, height) * 0.12;
+      ctx.font = `bold ${fightFontSize}px Arial`;
+      ctx.fillText('FIGHT!', width / 2, height / 2);
+    }
+    
+    // Restore context
+    ctx.restore();
+  }
 
   /**
    * Get latest snapshot bodies without interpolation
@@ -803,6 +896,11 @@ export class NetworkedGame {
    */
   destroy(): void {
     this.stop();
+    // Clear countdown timeout
+    if (this.countdownTimeoutId !== null) {
+      window.clearTimeout(this.countdownTimeoutId);
+      this.countdownTimeoutId = null;
+    }
     this.physics?.destroy();
     this.renderer.destroy();
     this.network.disconnect();
@@ -812,21 +910,25 @@ export class NetworkedGame {
     if (data) this.savedContraption = data;
   }
 
+  sendReadyCommand(cmd: PlayerReadyCommand): void {
+    if (this.role === 'host') {
+      // Host handles its own ready state directly
+      this.handleCommand(cmd as unknown as GameCommand);
+    } else {
+      // Client sends ready command to host
+      this.network.sendCommand(cmd as unknown as GameCommand);
+    }
+  }
+
   getPlayerResources(_playerId: string): { energy: number } | null { return null; }
   getMyEnergy(): number { return 0; }
 
   getBaseHealth(): { mine: number; enemy: number } {
-    if (this.role === 'host' && this.physics) {
-      return {
-        mine: this.physics.getBaseHp('host'),
-        enemy: this.physics.getBaseHp('client'),
-      };
-    } else {
-      return {
-        mine: this.latestSnapshot?.baseClientHp ?? 10,
-        enemy: this.latestSnapshot?.baseHostHp ?? 10,
-      };
-    }
+    return {
+      mine: 10,
+      enemy: 10,
+    };
   }
 
 }
+
