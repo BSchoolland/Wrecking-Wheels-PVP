@@ -117,9 +117,9 @@ export class PhysicsEngine {
    * Update map shrinking - progressively destroy ground blocks from both edges
    */
   private updateMapShrinking(): void {
-    // Initialize shrink start time on first call
+    // Only proceed if map shrinking has been explicitly enabled
     if (this.mapShrinkStartTime === null) {
-      this.mapShrinkStartTime = Date.now();
+      return;
     }
 
     const now = Date.now();
@@ -150,8 +150,8 @@ export class PhysicsEngine {
         .map(body => ({ body, distFromCenter: Math.abs(body.position.x - centerX) }))
         .sort((a, b) => b.distFromCenter - a.distFromCenter); // Farthest first (edges)
 
-      // Define decay zone: farthest 15% of blocks can randomly decay
-      const decayZoneSize = Math.max(1, Math.ceil(sortedByDistance.length * 0.15));
+      // Define decay zone: farthest X% of blocks can randomly decay
+      const decayZoneSize = Math.max(1, Math.ceil(sortedByDistance.length * 0.05));
       const decayZone = sortedByDistance.slice(0, decayZoneSize);
 
       // Randomly pick one from the decay zone

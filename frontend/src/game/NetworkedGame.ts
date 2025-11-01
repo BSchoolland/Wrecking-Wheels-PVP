@@ -13,6 +13,7 @@ import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
 import type { BlockData } from '@/game/contraptions/blocks/BaseBlock';
 import { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
 import { WORLD_BOUNDS } from '@shared/constants/physics';
+import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 import { InputController, InputRegistry } from '@/game/input/InputSystem';
 import { getTestSpawnPosition } from '@/game/terrain/MapLoader';
 
@@ -26,7 +27,6 @@ interface SerializableBody {
   id: string;
   position: { x: number; y: number };
   angle: number;
-  vertices?: Array<{ x: number; y: number }>;
   circleRadius?: number;
   isStatic: boolean;
   render: {
@@ -35,8 +35,20 @@ interface SerializableBody {
   };
   ownerId?: string;
   label?: string;
-  // Sprite info for rendering
-  sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; col?: number };
+  // Simple sprite ID: "sheet:row" format (e.g., "blocks:0")
+  spriteId?: string;
+  // Sprite metadata
+  spriteOffsetX?: number;
+  spriteOffsetY?: number;
+  spriteFlipX?: boolean;
+  spriteFlipY?: boolean;
+  spriteWidth?: number;
+  spriteHeight?: number;
+  // Color for ground blocks (client can infer size/shape)
+  groundColor?: string;
+  // Body dimensions (sent only for static bodies on first send)
+  width?: number;
+  height?: number;
   // Optional kinematics for better interpolation
   velocity?: { x: number; y: number };
   angularVelocity?: number;
@@ -98,27 +110,26 @@ export class NetworkedGame {
   // Effect events to sync (host only)
   private effectEvents: EffectEvent[] = [];
   
-  // Client-side: cache vertices for bodies (since they don't change)
-  private verticesCache: Map<string, Array<{ x: number; y: number }>> = new Map();
   // Client-side: cache owner/label/sprite metadata (sent once per body)
   private ownerCache: Map<string, string> = new Map();
   private labelCache: Map<string, string> = new Map();
-  private spriteCache: Map<string, { sheet: string; row: number; offsetX: number; offsetY: number; col?: number }> = new Map();
+  private spriteIdCache: Map<string, string> = new Map();
+  private spriteOffsetXCache: Map<string, number> = new Map();
+  private spriteOffsetYCache: Map<string, number> = new Map();
+  private spriteFlipXCache: Map<string, boolean> = new Map();
+  private spriteFlipYCache: Map<string, boolean> = new Map();
+  private spriteWidthCache: Map<string, number> = new Map();
+  private spriteHeightCache: Map<string, number> = new Map();
+  private groundColorCache: Map<string, string> = new Map();
+  private bodySizeCache: Map<string, { width: number; height: number }> = new Map();
   
   // Host-side: track which bodies we've sent full data for
   private sentBodies: Set<string> = new Set();
 
-  // Client-side interpolation buffer
-  private snapshotBuffer: NetworkSnapshot[] = [];
-  private interpolationDelay = 100; // ms to buffer behind for smoothness
-  private interpolationEnabled = true; // toggle for interpolation
-  
+  // Client-side: store latest snapshot for rendering
   private latestSnapshot: NetworkSnapshot | null = null;
   private gameEnded = false;
   private onGameOver?: (winner: 'host' | 'client') => void;
-
-  // Track estimated host time offset (hostNow ≈ clientNow + hostTimeOffsetMs)
-  private hostTimeOffsetMs = 0;
 
   // Cooldowns per player (disabled)
   private buildCooldowns: Map<string, number> = new Map();
@@ -179,9 +190,7 @@ export class NetworkedGame {
       onUIUpdate: (uiState) => this.handleUIUpdate(uiState),
       onEvent: (event) => this.handleEvent(event),
       onConnected: () => { 
-        if (import.meta.env.DEV) console.log('Peer connected!');
         this.bothPlayersConnected = true;
-        if (import.meta.env.DEV) console.log('Both players connected - energy generation started');
         // Host spawns own contraption immediately; client informs host of theirs
         if (this.role === 'host') {
           if (this.savedContraption) {
@@ -199,7 +208,6 @@ export class NetworkedGame {
         }
       },
       onDisconnected: () => { 
-        if (import.meta.env.DEV) console.log('Peer disconnected!');
         this.bothPlayersConnected = false;
       },
     });
@@ -289,9 +297,8 @@ export class NetworkedGame {
           const binding = InputRegistry.getById(c.bindingId);
           const now = Date.now();
           const oneWay = this.network.getEstimatedOneWayMs ? (this.network.getEstimatedOneWayMs() || 0) : 0;
-          const interp = this.interpolationDelay;
           const baseDelay = c.phase === 'press' ? (binding?.pressDelayMs || 0) : 0;
-          const activateAt = Math.max(now, now + baseDelay - oneWay - interp);
+          const activateAt = Math.max(now, now + baseDelay - oneWay);
           const list = this.pendingInputs.get(c.bindingId) || [];
           list.push({ playerId: c.playerId, bindingId: c.bindingId, phase: c.phase, activateAt, payload: c.payload });
           this.pendingInputs.set(c.bindingId, list);
@@ -369,7 +376,6 @@ export class NetworkedGame {
         constraints.forEach(constraint => this.physics!.addConstraint(constraint));
       }
       
-      if (import.meta.env.DEV) console.log('Spawned contraption at', clampedX, spawnY, 'for player', playerId, 'direction', direction);
     }, durationMs);
   }
 
@@ -378,41 +384,27 @@ export class NetworkedGame {
    */
   private handleStateUpdate(state: GameState): void {
     if (this.role === 'host') return;
-    // Treat incoming state as a network snapshot for interpolation
+    // Treat incoming state as a network snapshot
     const snapshot = { ...(state as unknown as NetworkSnapshot), _receivedAt: Date.now() } as NetworkSnapshot;
-
-    // Update host time offset estimate (EMA) so client can convert to host time
-    const recvNow = snapshot._receivedAt || Date.now();
-    // const oneWay = this.network.getEstimatedOneWayMs ? (this.network.getEstimatedOneWayMs() || 0) : 0;
-    // const estimatedHostNowAtReceive = snapshot.timestamp + oneWay;
-    const offsetEstimate = snapshot.timestamp - recvNow;
-    this.hostTimeOffsetMs = this.hostTimeOffsetMs === 0
-      ? offsetEstimate
-      : this.hostTimeOffsetMs + (offsetEstimate - this.hostTimeOffsetMs) * 0.1;
     
-    // Cache vertices in LOCAL coordinates (relative to body center, unrotated)
+    // Cache metadata (sent once per body)
     snapshot.bodies.forEach(body => {
-      if (body.vertices && body.vertices.length > 0 && !this.verticesCache.has(body.id)) {
-        // Convert world vertices to local coordinates
-        const localVertices = body.vertices.map(v => {
-          const dx = v.x - body.position.x;
-          const dy = v.y - body.position.y;
-          // Rotate back by -angle to get unrotated local coords
-          const cos = Math.cos(-body.angle);
-          const sin = Math.sin(-body.angle);
-          return {
-            x: dx * cos - dy * sin,
-            y: dx * sin + dy * cos
-          };
-        });
-        this.verticesCache.set(body.id, localVertices);
-      }
       if (body.ownerId && !this.ownerCache.has(body.id)) this.ownerCache.set(body.id, body.ownerId);
       if (body.label && !this.labelCache.has(body.id)) this.labelCache.set(body.id, body.label);
-      if (body.sprite && !this.spriteCache.has(body.id)) this.spriteCache.set(body.id, body.sprite);
+      if (body.spriteId && !this.spriteIdCache.has(body.id)) this.spriteIdCache.set(body.id, body.spriteId);
+      if (body.spriteOffsetX !== undefined && !this.spriteOffsetXCache.has(body.id)) this.spriteOffsetXCache.set(body.id, body.spriteOffsetX);
+      if (body.spriteOffsetY !== undefined && !this.spriteOffsetYCache.has(body.id)) this.spriteOffsetYCache.set(body.id, body.spriteOffsetY);
+      if (body.spriteFlipX !== undefined && !this.spriteFlipXCache.has(body.id)) this.spriteFlipXCache.set(body.id, body.spriteFlipX);
+      if (body.spriteFlipY !== undefined && !this.spriteFlipYCache.has(body.id)) this.spriteFlipYCache.set(body.id, body.spriteFlipY);
+      if (body.spriteWidth !== undefined && !this.spriteWidthCache.has(body.id)) this.spriteWidthCache.set(body.id, body.spriteWidth);
+      if (body.spriteHeight !== undefined && !this.spriteHeightCache.has(body.id)) this.spriteHeightCache.set(body.id, body.spriteHeight);
+      if (body.groundColor && !this.groundColorCache.has(body.id)) this.groundColorCache.set(body.id, body.groundColor);
+      if (body.width !== undefined && body.height !== undefined && !this.bodySizeCache.has(body.id)) {
+        this.bodySizeCache.set(body.id, { width: body.width, height: body.height });
+      }
     });
     
-    this.snapshotBuffer.push(snapshot);
+    // Just store the latest snapshot
     this.latestSnapshot = snapshot;
 
     // Process effect events
@@ -442,16 +434,6 @@ export class NetworkedGame {
         }
       });
     }
-
-    // Keep only the last ~1s of snapshots + interpolation delay (by host time), but never drain to zero
-    const hostNow = Date.now() + this.hostTimeOffsetMs;
-    const cutoff = hostNow - 1000 - this.interpolationDelay;
-    while (
-      this.snapshotBuffer.length > 1 &&
-      (this.snapshotBuffer[0].timestamp as number) < cutoff
-    ) {
-      this.snapshotBuffer.shift();
-    }
   }
 
   /**
@@ -478,7 +460,6 @@ export class NetworkedGame {
         }
         break;
       case 'player-joined':
-        if (import.meta.env.DEV) console.log('Player joined:', event.playerId);
         break;
     }
   }
@@ -497,17 +478,54 @@ export class NetworkedGame {
         const id = (body as ExtendedBody).customId || `static-${body.id}`;
         const isNew = !this.sentBodies.has(id);
         
-        // Send vertices only for new bodies
         if (isNew) {
           this.sentBodies.add(id);
         }
         
         const block = (body as unknown as { block?: BaseBlock }).block;
+        const isGround = body.isStatic && body.label === 'ground';
+        
+        // Determine spriteId and extract sprite metadata for contraption bodies
+        let spriteId: string | undefined;
+        let spriteOffsetX: number | undefined;
+        let spriteOffsetY: number | undefined;
+        let spriteFlipX: boolean | undefined;
+        let spriteFlipY: boolean | undefined;
+        let spriteWidth: number | undefined;
+        let spriteHeight: number | undefined;
+        
+        if (!isGround) {
+          const existingSprite = (body as unknown as { sprite?: { sheet: string; row: number; col?: number; offsetX?: number; offsetY?: number; flipX?: boolean; flipY?: boolean; width?: number; height?: number } }).sprite;
+          if (existingSprite) {
+            spriteId = `${existingSprite.sheet}:${existingSprite.row}${existingSprite.col !== undefined ? `:${existingSprite.col}` : ''}`;
+            spriteOffsetX = existingSprite.offsetX;
+            spriteOffsetY = existingSprite.offsetY;
+            spriteFlipX = existingSprite.flipX;
+            spriteFlipY = existingSprite.flipY;
+            spriteWidth = existingSprite.width;
+            spriteHeight = existingSprite.height;
+          } else if (block) {
+            const sheet = block.getSpritesheetName();
+            const row = block.getSpriteRow();
+            const col = (body as unknown as { spriteCol?: number }).spriteCol || 0;
+            if (sheet) {
+              spriteId = `${sheet}:${row}${col !== 0 ? `:${col}` : ''}`;
+              const offset = block.getSpriteOffset();
+              spriteOffsetX = offset.x;
+              spriteOffsetY = offset.y;
+              const size = block.getSpriteSize();
+              spriteWidth = size.width;
+              spriteHeight = size.height;
+              // Note: flipX/flipY would need to be determined from contraption direction
+              // For now, we'll extract it from the body's sprite if it exists
+            }
+          }
+        }
+        
         return {
           id,
           position: { x: body.position.x, y: body.position.y },
           angle: body.angle,
-          vertices: isNew ? body.vertices.map((v: Matter.Vector) => ({ x: v.x, y: v.y })) : undefined,
           circleRadius: body.circleRadius,
           isStatic: body.isStatic,
           render: {
@@ -525,16 +543,18 @@ export class NetworkedGame {
               return undefined;
             })(),
           },
-          ownerId: isNew ? ((body as ExtendedBody).ownerId || undefined) : undefined,
-          label: isNew ? (body.label || undefined) : undefined,
-          // Prefer existing per-body sprite if already set (e.g., wheel sub-bodies)
-          sprite: isNew ? (((body as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; col?: number } }).sprite) || (block ? {
-            sheet: block.getSpritesheetName() || '',
-            row: block.getSpriteRow(),
-            offsetX: block.getSpriteOffset().x,
-            offsetY: block.getSpriteOffset().y,
-            col: (body as unknown as { spriteCol?: number }).spriteCol || 0,
-          } : undefined)) : undefined,
+          ownerId: (body as ExtendedBody).ownerId || undefined,
+          label: body.label || undefined,
+          spriteId: spriteId || undefined,
+          spriteOffsetX: spriteOffsetX !== undefined ? spriteOffsetX : undefined,
+          spriteOffsetY: spriteOffsetY !== undefined ? spriteOffsetY : undefined,
+          spriteFlipX: spriteFlipX !== undefined ? spriteFlipX : undefined,
+          spriteFlipY: spriteFlipY !== undefined ? spriteFlipY : undefined,
+          spriteWidth: spriteWidth !== undefined ? spriteWidth : undefined,
+          spriteHeight: spriteHeight !== undefined ? spriteHeight : undefined,
+          groundColor: isGround && isNew ? ((body.render as Matter.IBodyRenderOptions)?.fillStyle || '#555555') : undefined,
+          width: isNew && body.isStatic ? body.circleRadius ? undefined : (body.bounds?.max.x ?? 0) - (body.bounds?.min.x ?? 0) : undefined,
+          height: isNew && body.isStatic ? body.circleRadius ? undefined : (body.bounds?.max.y ?? 0) - (body.bounds?.min.y ?? 0) : undefined,
           velocity: { x: (body as unknown as { velocity?: { x: number; y: number } }).velocity?.x || 0, y: (body as unknown as { velocity?: { x: number; y: number } }).velocity?.y || 0 },
           angularVelocity: (body as unknown as { angularVelocity?: number }).angularVelocity || 0,
         };
@@ -554,6 +574,7 @@ export class NetworkedGame {
         this.sentBodies.delete(id);
       }
     });
+    
     
     return snapshot;
   }
@@ -624,6 +645,19 @@ export class NetworkedGame {
 
     // Host: sync physics state to client periodically (20Hz)
     if (this.role === 'host' && this.network.isConnected()) {
+      const oneWay = this.network.getEstimatedOneWayMs ? (this.network.getEstimatedOneWayMs() || 0) : 0;
+      if (oneWay > 200) {
+        // High latency: drop to 5Hz (200ms interval)
+        this.syncInterval = 200;
+      } else if (oneWay > 75) {
+        // Moderate latency: drop to 10Hz (100ms interval)
+        this.syncInterval = 100;
+      } else {
+        // Low latency: keep at 20Hz (50ms interval)
+        this.syncInterval = 50;
+      }
+      
+
       if (now - this.lastSyncTime >= this.syncInterval) {
         const state = this.serializeState();
         if (state) {
@@ -637,7 +671,6 @@ export class NetworkedGame {
     if (this.role === 'host' && this.network.isConnected()) {
       if (now - this.lastUISyncTime >= this.uiSyncInterval) {
         const uiState = this.serializeUIState();
-        if (import.meta.env.DEV) console.log('Host sending UI update:', uiState);
         this.network.sendUIUpdate(uiState);
         this.lastUISyncTime = now;
       }
@@ -648,11 +681,8 @@ export class NetworkedGame {
       // Host renders from physics engine
       this.renderer.renderPhysics(this.physics.getAllBodies());
     } else {
-      // Client: render interpolated snapshot or latest snapshot
-      const hostNow = now + this.hostTimeOffsetMs;
-      const renderTime = hostNow - this.interpolationDelay;
-      const bodies = this.getInterpolatedBodies(renderTime);
-      // const bodies = this.getLatestSnapshotBodies();
+      // Client: render latest snapshot directly (no interpolation)
+      const bodies = this.getLatestSnapshotBodies();
       this.renderer.renderPhysics(bodies as Matter.Body[]);
     }
 
@@ -681,19 +711,24 @@ export class NetworkedGame {
     };
 
     snapshot.bodies.forEach(body => {
-      // Get vertices: use from snapshot if available, otherwise transform cached local vertices
-      let vertices: Array<{ x: number; y: number }>;
-      if (body.vertices) {
-        vertices = body.vertices;
-      } else {
-        const localVerts = this.verticesCache.get(body.id) || [];
-        const cos = Math.cos(body.angle);
-        const sin = Math.sin(body.angle);
-        vertices = localVerts.map(v => ({
-          x: body.position.x + (v.x * cos - v.y * sin),
-          y: body.position.y + (v.x * sin + v.y * cos)
-        }));
-      }
+      // For ground blocks, we need to create a simple rectangle shape
+      // For contraption bodies, we'll reconstruct basic shape from spriteId or default to rectangle
+      const isGround = body.isStatic && body.label === 'ground';
+      
+      // Get dimensions from snapshot or cache
+      const size = this.bodySizeCache.get(body.id);
+      const width = body.width ?? size?.width ?? (isGround ? BUILDER_CONSTANTS.GROUND_BLOCK_SIZE : BUILDER_CONSTANTS.BLOCK_SIZE);
+      const height = body.height ?? size?.height ?? (isGround ? BUILDER_CONSTANTS.GROUND_BLOCK_SIZE : BUILDER_CONSTANTS.BLOCK_SIZE);
+      
+      const halfWidth = width / 2;
+      const halfHeight = height / 2;
+      
+      const vertices = [
+        { x: body.position.x - halfWidth, y: body.position.y - halfHeight },
+        { x: body.position.x + halfWidth, y: body.position.y - halfHeight },
+        { x: body.position.x + halfWidth, y: body.position.y + halfHeight },
+        { x: body.position.x - halfWidth, y: body.position.y + halfHeight },
+      ];
 
       const fakeBody: Partial<Matter.Body> & { id: number } = {
         id: hashId(body.id),
@@ -702,129 +737,54 @@ export class NetworkedGame {
         vertices,
         circleRadius: body.circleRadius,
         isStatic: body.isStatic,
-        render: body.render,
+        render: {
+          ...body.render,
+          fillStyle: isGround ? (body.groundColor || this.groundColorCache.get(body.id) || body.render.fillStyle) : body.render.fillStyle,
+        },
       };
-      (fakeBody as unknown as { ownerId?: string }).ownerId = this.ownerCache.get(body.id);
+      (fakeBody as unknown as { ownerId?: string }).ownerId = body.ownerId || this.ownerCache.get(body.id);
       (fakeBody as unknown as { label?: string }).label = body.label || this.labelCache.get(body.id);
-      (fakeBody as unknown as { sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; width?: number; height?: number; col?: number } }).sprite = body.sprite || this.spriteCache.get(body.id);
+      
+      // Parse spriteId and reconstruct sprite object with all metadata
+      const spriteId = body.spriteId || this.spriteIdCache.get(body.id);
+      if (spriteId) {
+        const parts = spriteId.split(':');
+        if (parts.length >= 2) {
+          const sheet = parts[0];
+          const row = parseInt(parts[1], 10);
+          const col = parts[2] ? parseInt(parts[2], 10) : 0;
+          
+          // Get sprite metadata from snapshot or cache
+          const offsetX = body.spriteOffsetX !== undefined ? body.spriteOffsetX : (this.spriteOffsetXCache.get(body.id) ?? 0);
+          const offsetY = body.spriteOffsetY !== undefined ? body.spriteOffsetY : (this.spriteOffsetYCache.get(body.id) ?? 0);
+          const flipX = body.spriteFlipX !== undefined ? body.spriteFlipX : (this.spriteFlipXCache.get(body.id) ?? false);
+          const flipY = body.spriteFlipY !== undefined ? body.spriteFlipY : (this.spriteFlipYCache.get(body.id) ?? false);
+          const spriteWidth = body.spriteWidth !== undefined ? body.spriteWidth : (this.spriteWidthCache.get(body.id));
+          const spriteHeight = body.spriteHeight !== undefined ? body.spriteHeight : (this.spriteHeightCache.get(body.id));
+          
+          const sprite: { sheet: string; row: number; offsetX: number; offsetY: number; col?: number; flipX?: boolean; flipY?: boolean; width?: number; height?: number } = {
+            sheet,
+            row,
+            offsetX,
+            offsetY,
+            col,
+          };
+          
+          if (flipX) sprite.flipX = flipX;
+          if (flipY) sprite.flipY = flipY;
+          if (spriteWidth !== undefined) sprite.width = spriteWidth;
+          if (spriteHeight !== undefined) sprite.height = spriteHeight;
+          
+          (fakeBody as unknown as { sprite?: typeof sprite }).sprite = sprite;
+        }
+      }
+      
       result.push(fakeBody as Matter.Body);
     });
 
     return result;
   }
 
-  /**
-   * Build interpolated Matter-like bodies for rendering on the client
-   */
-  private getInterpolatedBodies(targetTime: number): Matter.Body[] {
-    if (this.snapshotBuffer.length === 0) {
-      return Array.from(this.bodies.values());
-    }
-  
-    // Step 1: Find the two snapshots bracketing targetTime
-    let prev = this.snapshotBuffer[0];
-    let next = this.snapshotBuffer[this.snapshotBuffer.length - 1];
-  
-    for (let i = 0; i < this.snapshotBuffer.length - 1; i++) {
-      const a = this.snapshotBuffer[i];
-      const b = this.snapshotBuffer[i + 1];
-      if (a.timestamp <= targetTime && targetTime <= b.timestamp) {
-        prev = a;
-        next = b;
-        break;
-      }
-    }
-  
-    // Step 2: Calculate interpolation fraction
-    const timeBetween = next.timestamp - prev.timestamp;
-    const timeElapsed = targetTime - prev.timestamp;
-    const fraction = timeBetween > 0 ? timeElapsed / timeBetween : 0;
-    // FIXME: The vibe coded time calculations for interpolation are buggy.  They work most of the time, but not always.  I can't be bothered to fix it right now.
-    // console.log('fraction', fraction);
-    // console.log(`Estimated RTT (from host offset): ${Math.round(2 * this.hostTimeOffsetMs)}ms, targetTime: ${targetTime.toFixed(1)}`);
-    // console.log(`prev: ${prev.timestamp}, next: ${next.timestamp}, target: ${targetTime}, diff: ${targetTime - next.timestamp}`);
-    const clampedFraction = Math.max(0, Math.min(1, fraction));
-  
-    // Step 3: Create maps for easy lookup
-    const prevMap = new Map(prev.bodies.map(b => [b.id, b]));
-    const nextMap = new Map(next.bodies.map(b => [b.id, b]));
-    
-    // Get all body IDs from both snapshots
-    const allIds = new Set([...prevMap.keys(), ...nextMap.keys()]);
-  
-    // Helper function from your original code
-    const hashId = (s: string): number => {
-      let h = 0;
-      for (let i = 0; i < s.length; i++) {
-        h = ((h << 5) - h) + s.charCodeAt(i);
-        h |= 0;
-      }
-      return Math.abs(h) + 1;
-    };
-  
-    const result: Matter.Body[] = [];
-  
-    allIds.forEach(id => {
-      const prevBody = prevMap.get(id);
-      const nextBody = nextMap.get(id);
-  
-      // Handle bodies that exist in both snapshots
-      if (prevBody && nextBody) {
-        // Interpolate position
-        const interpolatedPosition = {
-          x: prevBody.position.x + (nextBody.position.x - prevBody.position.x) * clampedFraction,
-          y: prevBody.position.y + (nextBody.position.y - prevBody.position.y) * clampedFraction
-        };
-  
-        // Interpolate angle (simple linear for now - we can improve this later)
-        const interpolatedAngle = prevBody.angle + (nextBody.angle - prevBody.angle) * clampedFraction;
-  
-        // Get vertices from snapshots if available, otherwise from cache
-        let vertices: Array<{ x: number; y: number }>;
-        if (prevBody.vertices || nextBody.vertices) {
-          vertices = prevBody.vertices || nextBody.vertices || [];
-        } else {
-          const localVerts = this.verticesCache.get(id) || [];
-          const cos = Math.cos(interpolatedAngle);
-          const sin = Math.sin(interpolatedAngle);
-          vertices = localVerts.map(v => ({
-            x: interpolatedPosition.x + (v.x * cos - v.y * sin),
-            y: interpolatedPosition.y + (v.x * sin + v.y * cos)
-          }));
-        }
-  
-        // Create the fake body
-        const fakeBody: Partial<Matter.Body> & { id: number } = {
-          id: hashId(id),
-          position: interpolatedPosition,
-          angle: interpolatedAngle,
-          vertices,
-          circleRadius: prevBody.circleRadius ?? nextBody.circleRadius,
-          isStatic: prevBody.isStatic ?? nextBody.isStatic,
-          render: prevBody.render ?? nextBody.render ?? { fillStyle: '#3498db' },
-        };
-        
-        // Add cached metadata
-        (fakeBody as Partial<Matter.Body> & { id: number; ownerId?: string; label?: string; sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; col?: number } }).ownerId = this.ownerCache.get(id);
-        (fakeBody as Partial<Matter.Body> & { id: number; ownerId?: string; label?: string; sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; col?: number } }).label = nextBody.label || prevBody.label || this.labelCache.get(id);
-        (fakeBody as Partial<Matter.Body> & { id: number; ownerId?: string; label?: string; sprite?: { sheet: string; row: number; offsetX: number; offsetY: number; width?: number; height?: number; col?: number } }).sprite = nextBody.sprite || prevBody.sprite || this.spriteCache.get(id);
-
-        result.push(fakeBody as Matter.Body);
-      }
-      // TODO: Handle bodies only in prev (being destroyed)
-      else if (prevBody && !nextBody) {
-        // Body is being destroyed - for now, just show it at prev position
-        // You mentioned wanting to trigger destruction animation here
-      }
-      
-      // TODO: Handle bodies only in next (newly created)
-      else if (!prevBody && nextBody) {
-        // Body just appeared - for now, just show it at next position
-      }
-    });
-  
-    return result;
-  }
 
   /**
    * Stop the game
@@ -869,7 +829,4 @@ export class NetworkedGame {
     }
   }
 
-  setInterpolationEnabled(enabled: boolean): void {
-    this.interpolationEnabled = enabled;
-  }
 }

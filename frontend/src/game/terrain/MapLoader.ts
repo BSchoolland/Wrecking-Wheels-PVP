@@ -8,7 +8,7 @@ import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 import type { VehicleClass } from '@/game/contraptions/Contraption';
 
 // Ground constants
-export const GROUND_BLOCK_SIZE = 50;
+export const GROUND_BLOCK_SIZE = BUILDER_CONSTANTS.GROUND_BLOCK_SIZE;
 export const GROUND_CENTER_Y = 450;
 export const GROUND_TOP_Y = GROUND_CENTER_Y - GROUND_BLOCK_SIZE / 2; // 425
 

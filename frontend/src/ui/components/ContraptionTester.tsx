@@ -35,7 +35,6 @@ export function ContraptionTester({ contraption: contraptionData, onBack }: Cont
     
     // Pre-load sprites
     SpriteManager.loadSprites().catch((err) => {
-      console.warn('Failed to load sprites:', err);
     });
 
     // Build contraption physics
@@ -56,6 +55,7 @@ export function ContraptionTester({ contraption: contraptionData, onBack }: Cont
     }
     
     physicsRef.current.start();
+    physicsRef.current.enableMapShrinking();
 
     // Use generic input controller in local mode
     const inputController = new InputController({ role: 'host', playerId: 'local', physics: physicsRef.current, effects: rendererRef.current?.effects || null });

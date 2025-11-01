@@ -9,7 +9,7 @@ export const GAME_CONSTANTS = {
   PASSIVE_RESOURCE_RATE: 1, // resources per second
   
   // Map shrinking (PVP only)
-  MAP_SHRINK_START_MS: 10000, // Start destroying ground after 10 seconds
+  MAP_SHRINK_START_MS: 1000000, // Start destroying ground after 10 seconds
   MAP_SHRINK_DESTROY_INTERVAL_MS: 200, // Destroy one block every 100ms
   MAP_SHRINK_FROM_EDGES: true, // Destroy from both ends toward center
   

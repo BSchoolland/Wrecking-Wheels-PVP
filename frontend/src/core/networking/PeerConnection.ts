@@ -59,28 +59,20 @@ export class PeerConnection {
 
     this.connection.onicecandidate = (event) => {
       if (event.candidate) {
-        console.log(`[${this.role}] ICE candidate: ${event.candidate.candidate}`);
         if (this.iceCandidateHandler) {
           this.iceCandidateHandler(event.candidate);
         }
-      } else {
-        console.log(`[${this.role}] ICE gathering complete`);
       }
     };
 
     this.connection.oniceconnectionstatechange = () => {
-      const state = this.connection?.iceConnectionState;
-      console.log(`[${this.role}] ICE connection state: ${state}`);
     };
 
     this.connection.onicegatheringstatechange = () => {
-      const state = this.connection?.iceGatheringState;
-      console.log(`[${this.role}] ICE gathering state: ${state}`);
     };
 
     this.connection.onconnectionstatechange = () => {
       const state = this.connection?.connectionState;
-      console.log(`[${this.role}] Connection state: ${state}`);
       if (state === 'disconnected' || state === 'failed' || state === 'closed') {
         this.onDisconnect();
       }
@@ -130,11 +122,9 @@ export class PeerConnection {
     if (!this.dataChannel) return;
 
     this.dataChannel.onopen = () => {
-      console.log(`[${this.role}] Physics data channel opened`);
     };
 
     this.dataChannel.onclose = () => {
-      console.log(`[${this.role}] Physics data channel closed`);
     };
 
     this.dataChannel.onmessage = (event) => {
@@ -151,12 +141,10 @@ export class PeerConnection {
     if (!this.reliableChannel) return;
 
     this.reliableChannel.onopen = () => {
-      console.log(`[${this.role}] Reliable data channel opened`);
       this.onConnect();
     };
 
     this.reliableChannel.onclose = () => {
-      console.log(`[${this.role}] Reliable data channel closed`);
     };
 
     this.reliableChannel.onmessage = (event) => {
@@ -174,7 +162,11 @@ export class PeerConnection {
    */
   sendState(state: GameState): void {
     if (this.role !== 'host') {
-      console.warn('Only host can send state');
+      return;
+    }
+
+    // Check if send queue has room before attempting to send
+    if (!this.canSendOnPhysicsChannel()) {
       return;
     }
 
@@ -186,11 +178,26 @@ export class PeerConnection {
   }
 
   /**
+   * Check if the physics data channel is ready and has room in its send queue
+   */
+  private canSendOnPhysicsChannel(): boolean {
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+      return false;
+    }
+    // RTCDataChannel.bufferedAmount shows bytes pending transmission
+    // If > 64KB, the queue is backed up; skip this frame to let it drain
+    const bufferedAmount = this.dataChannel.bufferedAmount || 0;
+    const canSend = bufferedAmount < 65536;
+    
+    
+    return canSend;
+  }
+
+  /**
    * Send command (client -> host or host -> host for local commands)
    */
   sendCommand(command: GameCommand): void {
     if (!this.reliableChannel || this.reliableChannel.readyState !== 'open') {
-      console.warn('Reliable channel not ready for command');
       return;
     }
     this.sendReliable({
@@ -205,7 +212,6 @@ export class PeerConnection {
    */
   sendUIUpdate(uiState: UIState): void {
     if (this.role !== 'host') {
-      console.warn('Only host can send UI updates');
       return;
     }
 
@@ -221,7 +227,6 @@ export class PeerConnection {
    */
   sendEvent(event: GameEvent): void {
     if (this.role !== 'host') {
-      console.warn('Only host can send events');
       return;
     }
 
@@ -237,7 +242,6 @@ export class PeerConnection {
    */
   private send(message: NetworkMessage): void {
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-      console.warn('Physics data channel not ready');
       return;
     }
 
@@ -253,7 +257,6 @@ export class PeerConnection {
    */
   private sendReliable(message: NetworkMessage): void {
     if (!this.reliableChannel || this.reliableChannel.readyState !== 'open') {
-      console.warn('Reliable data channel not ready');
       return;
     }
 

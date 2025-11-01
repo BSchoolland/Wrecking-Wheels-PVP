@@ -142,7 +142,8 @@ export class SpriteManager {
   static async loadSprites(): Promise<void> {
     const manager = SpriteManager.getInstance();
     try {
-      await manager.loadSpritesheet('blocks', '/src/assets/blocks-spritesheet.png');
+      // Use public path for prod compatibility
+      await manager.loadSpritesheet('blocks', '/blocks-spritesheet.png');
     } catch (error) {
       console.error('Failed to load sprite assets:', error);
       // Game continues without sprites, blocks render as physics bodies

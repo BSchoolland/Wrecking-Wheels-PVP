@@ -46,7 +46,7 @@ export class Camera {
     // Start centered with zoom that fits the world
     this.x = this.worldWidth / 2;
     this.y = this.worldHeight / 2;
-    this.setZoom(this.calculateFitZoom() * 4);
+    this.setZoom(this.calculateFitZoom() * 2);
 
     this.setupControls();
   }

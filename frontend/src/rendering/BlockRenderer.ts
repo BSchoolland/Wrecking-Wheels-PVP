@@ -60,7 +60,6 @@ export class BlockRenderer {
       ctx.drawImage(spriteCanvas, -halfW, -halfH);
       ctx.restore();
     } catch (error) {
-      console.warn(`Failed to render sprite:`, error);
       this.renderPhysicsBody(ctx, body);
     }
   }

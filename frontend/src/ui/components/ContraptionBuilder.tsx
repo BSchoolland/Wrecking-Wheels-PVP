@@ -407,6 +407,7 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
       setShowClassChangeModal(true);
     } else {
       setSelectedClass(newClass);
+      setContraption(new Contraption(contraption.id, contraption.name, contraption.direction, contraption.team, contraption.isBot, newClass));
     }
   };
 
@@ -513,7 +514,6 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
     SpriteManager.loadSprites().then(() => {
       buildIconUrls();
     }).catch((err) => {
-      console.warn('Failed to load sprites:', err);
     });
   }, []);
 

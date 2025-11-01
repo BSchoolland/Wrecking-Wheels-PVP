@@ -55,8 +55,6 @@ const clients = new Map<string, WSClient>();
 wss.on('connection', (ws: WebSocket) => {
   const clientId = `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   clients.set(clientId, { ws, id: clientId });
-  
-  console.log(`[server] Client connected: ${clientId}`);
 
   // Send client their ID
   ws.send(JSON.stringify({ type: 'connected', clientId }));
@@ -71,7 +69,6 @@ wss.on('connection', (ws: WebSocket) => {
             ? message.toString()
             : Buffer.from(message).toString();
       const data = JSON.parse(text);
-      console.log(`[server] Received: ${data.type} from ${clientId}`);
 
       switch (data.type) {
         case 'join-lobby':
@@ -86,9 +83,6 @@ wss.on('connection', (ws: WebSocket) => {
         case 'leave-lobby':
           handleLeaveLobby(clientId);
           break;
-        
-        default:
-          console.log(`[server] Unknown message type: ${data.type}`);
       }
     } catch (error) {
       console.error('Error parsing message:', error);
@@ -96,7 +90,6 @@ wss.on('connection', (ws: WebSocket) => {
   });
 
   ws.on('close', () => {
-    console.log(`[server] Client disconnected: ${clientId}`);
     handleLeaveLobby(clientId);
     clients.delete(clientId);
   });
@@ -129,8 +122,6 @@ function handleJoinLobby(clientId: string, lobbyId: string, role: 'host' | 'clie
       peerRole: role,
     }));
   });
-
-  console.log(`[server] Client ${clientId} joined lobby ${lobbyId} as ${role} (${lobbyClients.length} other peer(s) already in lobby)`);
 }
 
 function handleSignal(fromClientId: string, data: { targetId?: string; signal: unknown }) {
@@ -176,7 +167,5 @@ function handleLeaveLobby(clientId: string) {
 const PORT = process.env.PORT || 3001;
 
 server.listen(PORT, () => {
-  console.log(`[server] Server running on port ${PORT}`);
-  console.log(`[server] WebSocket server ready on path /ws`);
 });
 

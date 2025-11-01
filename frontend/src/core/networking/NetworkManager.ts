@@ -104,11 +104,9 @@ export class NetworkManager {
    */
   private connectToSignalingServer(url: string): void {
     this.connectionState = 'connecting';
-    console.log(`[${this.role}] Attempting to connect to signaling server: ${url}`);
     this.signalingWs = new WebSocket(url);
 
     this.signalingWs.onopen = () => {
-      console.log(`[${this.role}] ✓ Signaling server connected: ${url}`);
     };
 
     this.signalingWs.onmessage = (event) => {
@@ -121,8 +119,7 @@ export class NetworkManager {
       this.connectionState = 'failed';
     };
 
-    this.signalingWs.onclose = (event) => {
-      console.warn(`[${this.role}] Signaling WebSocket closed: ${url} (code=${event.code} reason=${event.reason || 'n/a'})`);
+    this.signalingWs.onclose = () => {
       this.connectionState = 'disconnected';
     };
   }
@@ -136,7 +133,6 @@ export class NetworkManager {
       case 'connected':
         // Server assigned us an ID
         this.myClientId = message.clientId;
-        console.log(`[${this.role}] Assigned client ID: ${this.myClientId}`);
         
         // Join the lobby
         this.joinLobby();
@@ -145,29 +141,19 @@ export class NetworkManager {
       case 'peer-joined':
         // Another peer joined the lobby
         this.peerId = message.peerId;
-        console.log(`[${this.role}] Peer joined: ${message.peerId} (role: ${message.peerRole})`);
         
         // If we're the host, initiate WebRTC connection
         if (this.role === 'host') {
-          console.log(`[${this.role}] Initiating WebRTC connection to client...`);
           await this.initiateWebRTC();
         }
         break;
 
       case 'signal':
         // WebRTC signaling data from peer
-        if (message.signal.type === 'ice-candidate') {
-          const cand = message.signal.candidate as RTCIceCandidateInit;
-          const candType = cand.candidate ? (cand.candidate.includes('typ relay') ? 'relay' : cand.candidate.includes('typ srflx') ? 'srflx' : cand.candidate.includes('typ host') ? 'host' : 'unknown') : 'null';
-          console.log(`[${this.role}] Received ICE candidate from peer: ${candType}`, cand.candidate ? cand.candidate.substring(0, 100) : 'null');
-        } else {
-          console.log(`[${this.role}] Received WebRTC signal from ${message.fromId}: ${message.signal.type}`);
-        }
         await this.handleWebRTCSignal(message.fromId, message.signal);
         break;
 
       case 'peer-left':
-        console.log(`[${this.role}] Peer left: ${message.peerId}`);
         this.peerId = null;
         this.peerConnection?.close();
         this.peerConnection = null;
@@ -182,7 +168,6 @@ export class NetworkManager {
   private joinLobby(): void {
     if (!this.signalingWs) return;
 
-    console.log(`[${this.role}] Joining lobby: ${this.lobbyId}`);
     this.signalingWs.send(JSON.stringify({
       type: 'join-lobby',
       lobbyId: this.lobbyId,
@@ -210,12 +195,11 @@ export class NetworkManager {
         } else if (message.type === 'ping') {
           // Echo back immediately
           this.peerConnection?.sendReliableInternal({ type: 'pong', payload: message.payload });
-        } else if (message.type === 'pong') {
-          const t0 = (message.payload as { t: number }).t;
-          if (typeof t0 === 'number') {
-            const rtt = performance.now() - t0;
-            console.log(`Raw ping RTT sample: ${rtt.toFixed(1)}ms`); // New: Log raw RTTs
-            this.rttQueue.push(rtt);
+          } else if (message.type === 'pong') {
+            const t0 = (message.payload as { t: number }).t;
+            if (typeof t0 === 'number') {
+              const rtt = performance.now() - t0;
+              this.rttQueue.push(rtt);
             if (this.rttQueue.length > this.MAX_RTT_SAMPLES) {
               this.rttQueue.shift();
             }
@@ -226,7 +210,6 @@ export class NetworkManager {
         }
       },
       onConnect: () => {
-        console.log(`[${this.role}] ✓ WebRTC peer connection established!`);
         this.connectionState = 'connected';
         this.onConnected();
         // Start periodic pings over reliable channel
@@ -236,7 +219,6 @@ export class NetworkManager {
         }, 1000);
       },
       onDisconnect: () => {
-        console.log(`[${this.role}] WebRTC peer connection closed`);
         this.connectionState = 'disconnected';
         this.onDisconnected();
         if (this.pingIntervalId) { window.clearInterval(this.pingIntervalId); this.pingIntervalId = null; }
@@ -252,7 +234,6 @@ export class NetworkManager {
 
     // Create and send offer
     const offer = await this.peerConnection.createOffer();
-    console.log(`[${this.role}] Sending WebRTC offer to peer`);
     this.sendSignal({ type: 'offer', offer });
   }
 
@@ -280,7 +261,6 @@ export class NetworkManager {
             const t0 = (message.payload as { t: number }).t;
             if (typeof t0 === 'number') {
               const rtt = performance.now() - t0;
-              console.log(`Raw ping RTT sample: ${rtt.toFixed(1)}ms`); // New: Log raw RTTs
               this.rttQueue.push(rtt);
               if (this.rttQueue.length > this.MAX_RTT_SAMPLES) {
                 this.rttQueue.shift();
@@ -346,7 +326,6 @@ export class NetworkManager {
    */
   sendState(state: unknown): void {
     if (this.role !== 'host') {
-      console.warn('Only host can send state');
       return;
     }
     this.peerConnection?.sendState(state as unknown as GameState);
@@ -364,7 +343,6 @@ export class NetworkManager {
    */
   sendUIUpdate(uiState: UIState): void {
     if (this.role !== 'host') {
-      console.warn('Only host can send UI updates');
       return;
     }
     this.peerConnection?.sendUIUpdate(uiState);
@@ -375,7 +353,6 @@ export class NetworkManager {
    */
   sendEvent(event: GameEvent): void {
     if (this.role !== 'host') {
-      console.warn('Only host can send events');
       return;
     }
     this.peerConnection?.sendEvent(event);

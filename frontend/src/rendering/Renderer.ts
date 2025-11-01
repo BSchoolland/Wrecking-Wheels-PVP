@@ -43,7 +43,6 @@ export class Renderer {
     
     // Load sprites once at initialization
     SpriteManager.loadSprites().catch((err) => {
-      if (import.meta.env.DEV) console.warn('Failed to load sprites:', err);
     });
   }
 
