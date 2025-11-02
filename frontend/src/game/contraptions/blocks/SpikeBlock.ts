@@ -43,6 +43,26 @@ export class SpikeBlock extends BaseBlock {
     return super.getAttachmentPoints(face, facingDirection);
   }
   
+  static getBodySpecs() {
+    const size = BUILDER_CONSTANTS.BLOCK_SIZE;
+    const halfSize = size / 2;
+    return {
+      0: {
+        shape: 'polygon' as const,
+        vertices: [
+          { x: -halfSize, y: -halfSize },  // left-top
+          { x: -halfSize, y: halfSize },   // left-bottom
+          { x: halfSize, y: 0 }             // tip
+        ],
+        options: {
+          label: 'spike',
+          density: PHYSICS_CONSTANTS.BLOCK_DENSITY,
+          render: { fillStyle: '#e91e63', strokeStyle: '#000', lineWidth: 2 }
+        }
+      }
+    };
+  }
+  
   // Uses BaseBlock.onCollision with stronger defaults
   
   createPhysicsBodies(worldX: number, worldY: number, direction?: number): PhysicsSpawnResult {

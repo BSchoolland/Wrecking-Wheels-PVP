@@ -8,7 +8,7 @@ import { NetworkManager, NetworkRole } from '@/core/networking/NetworkManager';
 import type { GameCommand, ContraptionData, UIState, GameEvent, BlockInputCommand, PlayerReadyCommand } from '@shared/types/Commands';
 import type { GameState } from '@shared/types/GameState';
 import Matter from 'matter-js';
-import { Contraption, blockFromData } from '@/game/contraptions';
+import { Contraption, blockFromData, BLOCK_REGISTRY } from '@/game/contraptions';
 import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
 import type { BlockData } from '@/game/contraptions/blocks/BaseBlock';
 import { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
@@ -25,9 +25,12 @@ interface ExtendedBody extends Matter.Body {
 
 interface SerializableBody {
   id: string;
+  blockType?: 'wheel' | 'spike' | 'core' | 'simple' | 'gray' | 'tnt' | 'rocket' | 'hinge';
+  bodyIndex?: number;
   position: { x: number; y: number };
   angle: number;
-  circleRadius?: number;
+  velocity?: { x: number; y: number };
+  angularVelocity?: number;
   isStatic: boolean;
   render: {
     fillStyle: string;
@@ -35,36 +38,14 @@ interface SerializableBody {
   };
   ownerId?: string;
   label?: string;
-  // Simple sprite ID: "sheet:row" format (e.g., "blocks:0")
   spriteId?: string;
-  // Sprite metadata
   spriteOffsetX?: number;
   spriteOffsetY?: number;
   spriteFlipX?: boolean;
   spriteFlipY?: boolean;
   spriteWidth?: number;
   spriteHeight?: number;
-  // Color for ground blocks (client can infer size/shape)
   groundColor?: string;
-  // Body dimensions (sent only for static bodies on first send)
-  width?: number;
-  height?: number;
-  // Optional kinematics for better interpolation
-  velocity?: { x: number; y: number };
-  angularVelocity?: number;
-  collisionFilter?: { category?: number; mask?: number; group?: number };
-  friction?: number;
-  frictionStatic?: number;
-  frictionAir?: number;
-  restitution?: number;
-  density?: number;
-  mass?: number;
-  inertia?: number;
-  inverseMass?: number;
-  inverseInertia?: number;
-  isSensor?: boolean;
-  slop?: number;
-  sleepThreshold?: number;
 }
 
 interface SerializableConstraint {
@@ -93,6 +74,7 @@ interface EffectEvent {
 
 interface NetworkSnapshot {
   timestamp: number;
+  tick: number;
   bodies: SerializableBody[];
   constraints?: SerializableConstraint[];
   effects?: EffectEvent[];
@@ -130,6 +112,10 @@ export class NetworkedGame {
   private syncInterval = 50; // Send physics updates every 50ms (20 times per second)
   private lastUISyncTime = 0;
   private uiSyncInterval = 200; // Send UI updates every 100ms (10 times per second)
+  
+  // Tick tracking for snapshot sequencing
+  private snapshotTick = 0; // Host-side: incrementing tick for each snapshot sent
+  private lastReceivedTick = 0; // Client-side: last applied snapshot tick
   
   // Effect events to sync (host only)
   private effectEvents: EffectEvent[] = [];
@@ -488,6 +474,14 @@ export class NetworkedGame {
     // Treat incoming state as a network snapshot
     const snapshot = { ...(state as unknown as NetworkSnapshot), _receivedAt: Date.now() } as NetworkSnapshot;
     
+    // Discard out-of-order packets (older tick)
+    if (snapshot.tick < this.lastReceivedTick) {
+      console.warn(`Discarding out-of-order packet: tick ${snapshot.tick} < ${this.lastReceivedTick}`);
+      return;
+    }
+    
+    this.lastReceivedTick = snapshot.tick;
+    
     // Cache metadata (sent once per body)
     snapshot.bodies.forEach(body => {
       if (body.ownerId && !this.ownerCache.has(body.id)) this.ownerCache.set(body.id, body.ownerId);
@@ -500,9 +494,6 @@ export class NetworkedGame {
       if (body.spriteWidth !== undefined && !this.spriteWidthCache.has(body.id)) this.spriteWidthCache.set(body.id, body.spriteWidth);
       if (body.spriteHeight !== undefined && !this.spriteHeightCache.has(body.id)) this.spriteHeightCache.set(body.id, body.spriteHeight);
       if (body.groundColor && !this.groundColorCache.has(body.id)) this.groundColorCache.set(body.id, body.groundColor);
-      if (body.width !== undefined && body.height !== undefined && !this.bodySizeCache.has(body.id)) {
-        this.bodySizeCache.set(body.id, { width: body.width, height: body.height });
-      }
     });
     
     // Just store the latest snapshot
@@ -554,30 +545,68 @@ export class NetworkedGame {
 
     snapshot.bodies.forEach(bodyState => {
       const isGround = bodyState.isStatic && bodyState.label === 'ground';
-      const cachedSize = this.bodySizeCache.get(bodyState.id);
-      const width = bodyState.width ?? cachedSize?.width ?? (isGround ? BUILDER_CONSTANTS.GROUND_BLOCK_SIZE : BUILDER_CONSTANTS.BLOCK_SIZE);
-      const height = bodyState.height ?? cachedSize?.height ?? (isGround ? BUILDER_CONSTANTS.GROUND_BLOCK_SIZE : BUILDER_CONSTANTS.BLOCK_SIZE);
-
-      const options: Matter.IBodyDefinition = {
-        isStatic: bodyState.isStatic,
-        label: bodyState.label,
-      };
-
-      if (bodyState.collisionFilter) {
-        options.collisionFilter = { ...bodyState.collisionFilter };
+      
+      let created: Matter.Body;
+      
+      // Use block specs if available, otherwise fallback to ground bodies
+      if (bodyState.blockType && bodyState.bodyIndex !== undefined) {
+        const BlockClass = BLOCK_REGISTRY[bodyState.blockType];
+        const specs = BlockClass.getBodySpecs();
+        const spec = specs[bodyState.bodyIndex];
+        
+        if (!spec) {
+          console.warn(`Unknown body spec for ${bodyState.blockType} body ${bodyState.bodyIndex}`);
+          return;
+        }
+        
+        const options: Matter.IBodyDefinition = { ...spec.options };
+        
+        // Create body based on shape
+        if (spec.shape === 'circle') {
+          created = Matter.Bodies.circle(bodyState.position.x, bodyState.position.y, spec.radius!, options);
+        } else if (spec.shape === 'rectangle') {
+          created = Matter.Bodies.rectangle(bodyState.position.x, bodyState.position.y, spec.width!, spec.height!, options);
+        } else if (spec.shape === 'polygon') {
+          // Convert relative vertices to absolute positions
+          // Only rotate 180 degrees for mirrored contraptions (opponent's contraptions)
+          const isMirrored = bodyState.ownerId && bodyState.ownerId !== this.playerId;
+          const vertices = spec.vertices!.map(v => ({
+            x: isMirrored ? bodyState.position.x + v.x : bodyState.position.x - v.x,
+            y: isMirrored ? bodyState.position.y + v.y : bodyState.position.y - v.y
+          }));
+          created = Matter.Bodies.fromVertices(bodyState.position.x, bodyState.position.y, [vertices], options);
+        } else {
+          console.warn(`Unknown body shape: ${spec.shape}`);
+          return;
+        }
+      } else if (isGround) {
+        // Ground bodies remain rectangles
+        const cachedSize = this.bodySizeCache.get(bodyState.id);
+        const width = cachedSize?.width ?? BUILDER_CONSTANTS.GROUND_BLOCK_SIZE;
+        const height = cachedSize?.height ?? BUILDER_CONSTANTS.GROUND_BLOCK_SIZE;
+        
+        const options: Matter.IBodyDefinition = {
+          isStatic: bodyState.isStatic,
+          label: bodyState.label,
+        };
+        
+        created = Matter.Bodies.rectangle(bodyState.position.x, bodyState.position.y, width, height, options);
+      } else if (bodyState.isStatic) {
+        // Treat any other static body as ground
+        const cachedSize = this.bodySizeCache.get(bodyState.id);
+        const width = cachedSize?.width ?? BUILDER_CONSTANTS.GROUND_BLOCK_SIZE;
+        const height = cachedSize?.height ?? BUILDER_CONSTANTS.GROUND_BLOCK_SIZE;
+        
+        const options: Matter.IBodyDefinition = {
+          isStatic: bodyState.isStatic,
+          label: bodyState.label,
+        };
+        
+        created = Matter.Bodies.rectangle(bodyState.position.x, bodyState.position.y, width, height, options);
+      } else {
+        console.warn(`Body ${bodyState.id} has no block type and is not ground`);
+        return;
       }
-      if (bodyState.friction !== undefined) options.friction = bodyState.friction;
-      if (bodyState.frictionStatic !== undefined) options.frictionStatic = bodyState.frictionStatic;
-      if (bodyState.frictionAir !== undefined) options.frictionAir = bodyState.frictionAir;
-      if (bodyState.restitution !== undefined) options.restitution = bodyState.restitution;
-      if (bodyState.density !== undefined) options.density = bodyState.density;
-      if (bodyState.isSensor !== undefined) options.isSensor = bodyState.isSensor;
-      if (bodyState.slop !== undefined) options.slop = bodyState.slop;
-      if (bodyState.sleepThreshold !== undefined) options.sleepThreshold = bodyState.sleepThreshold;
-
-      const created = bodyState.circleRadius && bodyState.circleRadius > 0
-        ? Matter.Bodies.circle(bodyState.position.x, bodyState.position.y, bodyState.circleRadius, options)
-        : Matter.Bodies.rectangle(bodyState.position.x, bodyState.position.y, width, height, options);
 
       const extendedBody = created as ExtendedBody;
       extendedBody.customId = bodyState.id;
@@ -626,13 +655,6 @@ export class NetworkedGame {
       Matter.Body.setAngle(extendedBody, bodyState.angle);
       Matter.Body.setVelocity(extendedBody, velocity);
       Matter.Body.setAngularVelocity(extendedBody, bodyState.angularVelocity ?? 0);
-
-      if (bodyState.mass !== undefined && bodyState.mass > 0) {
-        Matter.Body.setMass(extendedBody, bodyState.mass);
-      }
-      if (bodyState.inertia !== undefined && bodyState.inertia > 0) {
-        Matter.Body.setInertia(extendedBody, bodyState.inertia);
-      }
 
       extendedBody.force.x = 0;
       extendedBody.force.y = 0;
@@ -712,6 +734,7 @@ export class NetworkedGame {
     
     const snapshot: NetworkSnapshot = {
       timestamp: Date.now(),
+      tick: this.snapshotTick++, // Add tick to snapshot
       bodies: allBodies.map(body => {
         const id = (body as ExtendedBody).customId || `static-${body.id}`;
         const isNew = !this.sentBodies.has(id);
@@ -762,11 +785,60 @@ export class NetworkedGame {
           }
         }
         
+        // Derive blockType and bodyIndex from block and label
+        let blockType: 'wheel' | 'spike' | 'core' | 'simple' | 'gray' | 'tnt' | 'rocket' | 'hinge' | undefined;
+        let bodyIndex: number | undefined;
+        
+        const label = body.label || '';
+        
+        if (block && !isGround) {
+          blockType = block.type as 'wheel' | 'spike' | 'core' | 'simple' | 'gray' | 'tnt' | 'rocket' | 'hinge';
+          // Determine bodyIndex from label
+          if (label.includes('-wheel') || label.includes('wheel-circle')) bodyIndex = 1;
+          else if (label.includes('-attach-bottom') || label.includes('hinge-attach-bottom')) bodyIndex = 1;
+          else if (label.includes('-hinge') || label.includes('hinge-circle')) bodyIndex = 2;
+          else bodyIndex = 0;
+        } else if (!isGround) {
+          // Infer blockType from label when block reference is missing (multi-body parts)
+          if (label.startsWith('wheel-')) {
+            blockType = 'wheel';
+            if (label.includes('-wheel')) bodyIndex = 1;
+            else if (label.includes('-attach')) bodyIndex = 0;
+          } else if (label.startsWith('spike-')) {
+            blockType = 'spike';
+            if (label.includes('-wheel')) bodyIndex = 1;
+            else bodyIndex = 0;
+          } else if (label.startsWith('hinge-')) {
+            blockType = 'hinge';
+            if (label.includes('-hinge') || label.includes('hinge-circle')) bodyIndex = 2;
+            else if (label.includes('-attach-bottom') || label.includes('hinge-attach-bottom')) bodyIndex = 1;
+            else bodyIndex = 0;
+          } else if (label.startsWith('core-') || label === 'core') {
+            blockType = 'core';
+            bodyIndex = 0;
+          } else if (label.startsWith('simple-') || label === 'simple') {
+            blockType = 'simple';
+            bodyIndex = 0;
+          } else if (label.startsWith('gray-') || label === 'gray') {
+            blockType = 'gray';
+            bodyIndex = 0;
+          } else if (label.startsWith('tnt-') || label === 'tnt') {
+            blockType = 'tnt';
+            bodyIndex = 0;
+          } else if (label.startsWith('rocket-') || label === 'rocket') {
+            blockType = 'rocket';
+            bodyIndex = 0;
+          }
+        }
+        
         return {
           id,
+          blockType,
+          bodyIndex,
           position: { x: body.position.x, y: body.position.y },
           angle: body.angle,
-          circleRadius: body.circleRadius,
+          velocity: { x: body.velocity.x, y: body.velocity.y },
+          angularVelocity: body.angularVelocity,
           isStatic: body.isStatic,
           render: {
             fillStyle: (body.render as Matter.IBodyRenderOptions)?.fillStyle || (body.isStatic ? '#555555' : '#3498db'),
@@ -787,23 +859,6 @@ export class NetworkedGame {
           spriteWidth: spriteWidth !== undefined ? spriteWidth : undefined,
           spriteHeight: spriteHeight !== undefined ? spriteHeight : undefined,
           groundColor: isGround && isNew ? ((body.render as Matter.IBodyRenderOptions)?.fillStyle || '#555555') : undefined,
-          width: isNew && body.isStatic ? body.circleRadius ? undefined : (body.bounds?.max.x ?? 0) - (body.bounds?.min.x ?? 0) : undefined,
-          height: isNew && body.isStatic ? body.circleRadius ? undefined : (body.bounds?.max.y ?? 0) - (body.bounds?.min.y ?? 0) : undefined,
-          velocity: { x: (body as unknown as { velocity?: { x: number; y: number } }).velocity?.x || 0, y: (body as unknown as { velocity?: { x: number; y: number } }).velocity?.y || 0 },
-          angularVelocity: (body as unknown as { angularVelocity?: number }).angularVelocity || 0,
-          collisionFilter: body.collisionFilter ? { ...body.collisionFilter } : undefined,
-          friction: body.friction,
-          frictionStatic: body.frictionStatic,
-          frictionAir: body.frictionAir,
-          restitution: body.restitution,
-          density: (body as { density?: number }).density,
-          mass: body.mass,
-          inertia: body.inertia,
-          inverseMass: body.inverseMass,
-          inverseInertia: body.inverseInertia,
-          isSensor: body.isSensor,
-          slop: body.slop,
-          sleepThreshold: body.sleepThreshold,
         };
       }),
       effects: this.effectEvents.length > 0 ? [...this.effectEvents] : undefined,
@@ -1103,8 +1158,8 @@ export class NetworkedGame {
       
       // Get dimensions from snapshot or cache
       const size = this.bodySizeCache.get(body.id);
-      const width = body.width ?? size?.width ?? (isGround ? BUILDER_CONSTANTS.GROUND_BLOCK_SIZE : BUILDER_CONSTANTS.BLOCK_SIZE);
-      const height = body.height ?? size?.height ?? (isGround ? BUILDER_CONSTANTS.GROUND_BLOCK_SIZE : BUILDER_CONSTANTS.BLOCK_SIZE);
+      const width = size?.width ?? (isGround ? BUILDER_CONSTANTS.GROUND_BLOCK_SIZE : BUILDER_CONSTANTS.BLOCK_SIZE);
+      const height = size?.height ?? (isGround ? BUILDER_CONSTANTS.GROUND_BLOCK_SIZE : BUILDER_CONSTANTS.BLOCK_SIZE);
       
       const halfWidth = width / 2;
       const halfHeight = height / 2;
@@ -1121,7 +1176,6 @@ export class NetworkedGame {
         position: body.position,
         angle: body.angle,
         vertices,
-        circleRadius: body.circleRadius,
         isStatic: body.isStatic,
         render: {
           ...body.render,

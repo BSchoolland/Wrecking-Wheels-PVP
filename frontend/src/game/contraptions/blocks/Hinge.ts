@@ -78,6 +78,41 @@ export class HingeBlock extends BaseBlock {
     return HingeBlock.ATTACHMENT_HEIGHT / 2;
   }
 
+  static getBodySpecs() {
+    return {
+      0: {
+        shape: 'rectangle' as const,
+        width: BUILDER_CONSTANTS.BLOCK_SIZE,
+        height: HingeBlock.ATTACHMENT_HEIGHT,
+        options: {
+          label: 'hinge-attach-top',
+          density: PHYSICS_CONSTANTS.BLOCK_DENSITY,
+          render: { fillStyle: '#795548', strokeStyle: '#000', lineWidth: 2 }
+        }
+      },
+      1: {
+        shape: 'rectangle' as const,
+        width: BUILDER_CONSTANTS.BLOCK_SIZE,
+        height: HingeBlock.ATTACHMENT_HEIGHT,
+        options: {
+          label: 'hinge-attach-bottom',
+          density: PHYSICS_CONSTANTS.BLOCK_DENSITY,
+          render: { fillStyle: '#795548', strokeStyle: '#000', lineWidth: 2 }
+        }
+      },
+      2: {
+        shape: 'circle' as const,
+        radius: HingeBlock.HINGE_RADIUS,
+        options: {
+          label: 'hinge-circle',
+          friction: 0.8,
+          density: PHYSICS_CONSTANTS.BLOCK_DENSITY,
+          render: { fillStyle: '#555', strokeStyle: '#000', lineWidth: 2 }
+        }
+      }
+    };
+  }
+
   private getUnrotatedFace(face: AttachmentDirection): AttachmentDirection {
     // Map the rotated face back to the unrotated local face
     if (this.ignoreRotation) return face;

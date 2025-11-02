@@ -8,6 +8,15 @@ import type { BlockType } from '@/game/contraptions';
 export type AttachmentDirection = 'top' | 'right' | 'bottom' | 'left';
 export type DamageType = 'sharp' | 'blunt' | 'blast';
 
+export interface BodySpec {
+  shape: 'rectangle' | 'circle' | 'polygon';
+  width?: number;
+  height?: number;
+  radius?: number;
+  vertices?: Array<{ x: number; y: number }>;
+  options: Matter.IBodyDefinition;
+}
+
 interface EffectsInterface {
   spawnImpactParticles: (x: number, y: number, damage: number, vx: number, vy: number) => void;
   spawnDamageNumber: (x: number, y: number, damage: number) => void;
@@ -110,6 +119,15 @@ export abstract class BaseBlock {
    * Create physics bodies for this block at the given world position
    */
   abstract createPhysicsBodies(worldX: number, worldY: number, direction?: number): PhysicsSpawnResult;
+
+  /**
+   * Get body specifications for network serialization
+   * Returns specs for all bodies this block creates
+   * Subclasses should override this to define their bodies
+   */
+  static getBodySpecs(): { [bodyIndex: number]: BodySpec } {
+    return {};
+  }
 
   /**
    * Get the body to use for a specific attachment face

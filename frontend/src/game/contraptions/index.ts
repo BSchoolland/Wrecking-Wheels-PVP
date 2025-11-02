@@ -3,7 +3,7 @@
  */
 
 export { BaseBlock } from './blocks/BaseBlock';
-export type { BlockData, AttachmentDirection, PhysicsSpawnResult } from './blocks/BaseBlock';
+export type { BlockData, AttachmentDirection, PhysicsSpawnResult, BodySpec } from './blocks/BaseBlock';
 
 export { Contraption, setContraptionDebug, CONTRAPTION_DEBUG, setContraptionStaticDebug, CONTRAPTION_STATIC_DEBUG } from './Contraption';
 export type { ContraptionSaveData } from './Contraption';
@@ -32,6 +32,8 @@ const BLOCK_REGISTRY = {
 } as const;
 
 export type BlockType = keyof typeof BLOCK_REGISTRY;
+
+export { BLOCK_REGISTRY };
 
 // UI/Hotkey metadata for builder palette
 export const BLOCK_METADATA: Readonly<Record<BlockType, { label: string; key: string }>> = {

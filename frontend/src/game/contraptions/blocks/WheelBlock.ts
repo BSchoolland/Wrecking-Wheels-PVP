@@ -42,6 +42,31 @@ export class WheelBlock extends BaseBlock {
     return WheelBlock.ATTACHMENT_HEIGHT / 2;
   }
   
+  static getBodySpecs() {
+    return {
+      0: {
+        shape: 'rectangle' as const,
+        width: BUILDER_CONSTANTS.BLOCK_SIZE,
+        height: WheelBlock.ATTACHMENT_HEIGHT,
+        options: {
+          label: 'wheel-attach',
+          density: PHYSICS_CONSTANTS.BLOCK_DENSITY,
+          render: { fillStyle: '#795548', strokeStyle: '#000', lineWidth: 2 }
+        }
+      },
+      1: {
+        shape: 'circle' as const,
+        radius: WheelBlock.WHEEL_RADIUS,
+        options: {
+          label: 'wheel-circle',
+          friction: 0.8,
+          density: PHYSICS_CONSTANTS.BLOCK_DENSITY,
+          render: { fillStyle: '#555', strokeStyle: '#000', lineWidth: 2 }
+        }
+      }
+    };
+  }
+  
   createPhysicsBodies(worldX: number, worldY: number, direction: number = 1): PhysicsSpawnResult {
     // Use unique negative collision group per wheel so its parts don't collide with each other
     // while not affecting other wheels

@@ -27,6 +27,21 @@ export class GrayBlock extends BaseBlock {
     return ['top', 'right', 'bottom', 'left'];
   }
   
+  static getBodySpecs() {
+    return {
+      0: {
+        shape: 'rectangle' as const,
+        width: BUILDER_CONSTANTS.BLOCK_SIZE,
+        height: BUILDER_CONSTANTS.BLOCK_SIZE,
+        options: {
+          label: 'gray',
+          density: PHYSICS_CONSTANTS.BLOCK_DENSITY,
+          render: { fillStyle: '#757575', strokeStyle: '#000', lineWidth: 2 }
+        }
+      }
+    };
+  }
+
   createPhysicsBodies(worldX: number, worldY: number, _direction?: number): PhysicsSpawnResult {
     const body = Matter.Bodies.rectangle(
       worldX,

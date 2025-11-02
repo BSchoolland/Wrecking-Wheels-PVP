@@ -41,6 +41,22 @@ export class RocketBlock extends BaseBlock {
     return ['right'];
   }
 
+  static getBodySpecs() {
+    return {
+      0: {
+        shape: 'rectangle' as const,
+        width: RocketBlock.BODY_WIDTH,
+        height: RocketBlock.BODY_HEIGHT,
+        options: {
+          label: 'rocket',
+          density: PHYSICS_CONSTANTS.BLOCK_DENSITY,
+          chamfer: { radius: 6 },
+          render: { fillStyle: '#c62828', strokeStyle: '#000', lineWidth: 2 }
+        }
+      }
+    };
+  }
+
   createPhysicsBodies(worldX: number, worldY: number, direction: number = 1): PhysicsSpawnResult {
     // Single rocket body
     const body = Matter.Bodies.rectangle(
