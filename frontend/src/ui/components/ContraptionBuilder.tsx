@@ -514,6 +514,7 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
     SpriteManager.loadSprites().then(() => {
       buildIconUrls();
     }).catch((err) => {
+      console.error('[ContraptionBuilder] Failed to load sprites:', err);
     });
   }, []);
 

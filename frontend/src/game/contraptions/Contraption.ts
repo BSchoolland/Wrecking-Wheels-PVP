@@ -18,7 +18,7 @@ export interface ContraptionSaveData {
   isBot?: boolean;
   vehicleClass?: VehicleClass;
   }
-export let CONTRAPTION_DEBUG = false;
+export let CONTRAPTION_DEBUG = true;
 export function setContraptionDebug(value: boolean) { CONTRAPTION_DEBUG = value; }
 
 export let CONTRAPTION_STATIC_DEBUG = false;

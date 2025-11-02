@@ -1,6 +1,6 @@
 /**
  * Physics Engine - Wrapper around Matter.js
- * Runs ONLY on the host machine
+ * Runs on the host (authoritative) and optionally on clients for prediction/replay
  */
 
 import Matter from 'matter-js';
@@ -15,6 +15,10 @@ import type { EffectManager } from '@/rendering/EffectManager';
 interface ContraptionLike {
   id: string;
   checkConnectivity?: () => void;
+}
+
+interface PhysicsEngineOptions {
+  createBoundaries?: boolean;
 }
 
 export class PhysicsEngine {
@@ -36,7 +40,8 @@ export class PhysicsEngine {
   private mapShrinkStartTime: number | null = null;
   private lastBlockDestroyTime: number | null = null;
 
-  constructor() {
+  constructor(options: PhysicsEngineOptions = {}) {
+    const { createBoundaries = true } = options;
     // Create Matter.js engine
     this.engine = Matter.Engine.create({
       gravity: { x: 0, y: PHYSICS_CONSTANTS.GRAVITY, scale: 0.001 },
@@ -44,7 +49,9 @@ export class PhysicsEngine {
     this.world = this.engine.world;
 
     // Create world boundaries
-    this.createBoundaries();
+    if (createBoundaries) {
+      this.createBoundaries();
+    }
     
     // Set up collision detection
     this.setupCollisionHandling();
@@ -392,6 +399,13 @@ export class PhysicsEngine {
    */
   addConstraint(constraint: Matter.Constraint): void {
     Matter.World.add(this.world, constraint);
+  }
+
+  /**
+   * Remove a constraint from the physics world
+   */
+  removeConstraint(constraint: Matter.Constraint): void {
+    Matter.World.remove(this.world, constraint);
   }
 
   /**

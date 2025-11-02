@@ -7,7 +7,7 @@ import { Renderer } from '@/rendering/Renderer';
 import { NetworkManager, NetworkRole } from '@/core/networking/NetworkManager';
 import type { GameCommand, ContraptionData, UIState, GameEvent, BlockInputCommand, PlayerReadyCommand } from '@shared/types/Commands';
 import type { GameState } from '@shared/types/GameState';
-import type * as Matter from 'matter-js';
+import Matter from 'matter-js';
 import { Contraption, blockFromData } from '@/game/contraptions';
 import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
 import type { BlockData } from '@/game/contraptions/blocks/BaseBlock';
@@ -52,6 +52,30 @@ interface SerializableBody {
   // Optional kinematics for better interpolation
   velocity?: { x: number; y: number };
   angularVelocity?: number;
+  collisionFilter?: { category?: number; mask?: number; group?: number };
+  friction?: number;
+  frictionStatic?: number;
+  frictionAir?: number;
+  restitution?: number;
+  density?: number;
+  mass?: number;
+  inertia?: number;
+  inverseMass?: number;
+  inverseInertia?: number;
+  isSensor?: boolean;
+  slop?: number;
+  sleepThreshold?: number;
+}
+
+interface SerializableConstraint {
+  id: string;
+  bodyAId?: string;
+  bodyBId?: string;
+  pointA: { x: number; y: number };
+  pointB: { x: number; y: number };
+  length?: number;
+  stiffness?: number;
+  damping?: number;
 }
 
 interface EffectEvent {
@@ -70,6 +94,7 @@ interface EffectEvent {
 interface NetworkSnapshot {
   timestamp: number;
   bodies: SerializableBody[];
+  constraints?: SerializableConstraint[];
   effects?: EffectEvent[];
   _receivedAt?: number;
 }
@@ -127,6 +152,7 @@ export class NetworkedGame {
 
   // Client-side: store latest snapshot for rendering
   private latestSnapshot: NetworkSnapshot | null = null;
+  private clientConstraints: Map<string, Matter.Constraint> = new Map();
 
   // Cooldowns per player (disabled)
   private buildCooldowns: Map<string, number> = new Map();
@@ -145,8 +171,6 @@ export class NetworkedGame {
   
   // Win state
   private winState: { winner: string; loser: string } | null = null;
-  private contraceptionsByPlayer: Map<string, Set<string>> = new Map(); // playerId -> set of contraption body IDs
-  private playerContrapctionCores: Map<string, string> = new Map(); // playerId -> coreBodyId
   
   public energy: number = 0;
 
@@ -177,12 +201,22 @@ export class NetworkedGame {
     // Disable manual camera controls during battle; renderer will follow player
     this.renderer.camera.setControlsEnabled(false);
     
-    // Initialize physics (host only) - but don't start yet
+    // Initialize physics
     if (this.role === 'host') {
       this.physics = new PhysicsEngine();
+    } else {
+      this.physics = new PhysicsEngine({ createBoundaries: false });
+    }
+
+    if (this.physics) {
       this.physics.setEffectManager(this.renderer.effects);
+    }
+
+    if (this.role === 'host' && this.physics) {
       this.setupEffectCapture();
       // Physics will start in onConnected callback
+    } else if (this.role === 'client' && this.physics) {
+      this.physics.start();
     }
     
     // Initialize networking
@@ -474,6 +508,8 @@ export class NetworkedGame {
     // Just store the latest snapshot
     this.latestSnapshot = snapshot;
 
+    this.applyClientSnapshot(snapshot);
+
     // Process effect events
     if (snapshot.effects) {
       snapshot.effects.forEach(effect => {
@@ -501,6 +537,137 @@ export class NetworkedGame {
         }
       });
     }
+  }
+
+  private applyClientSnapshot(snapshot: NetworkSnapshot): void {
+    if (this.role !== 'client' || !this.physics) return;
+
+    const physics = this.physics;
+
+    this.clientConstraints.forEach(constraint => physics.removeConstraint(constraint));
+    this.clientConstraints.clear();
+
+    this.bodies.forEach(body => physics.removeBody(body));
+    this.bodies.clear();
+
+    const bodyMap = new Map<string, ExtendedBody>();
+
+    snapshot.bodies.forEach(bodyState => {
+      const isGround = bodyState.isStatic && bodyState.label === 'ground';
+      const cachedSize = this.bodySizeCache.get(bodyState.id);
+      const width = bodyState.width ?? cachedSize?.width ?? (isGround ? BUILDER_CONSTANTS.GROUND_BLOCK_SIZE : BUILDER_CONSTANTS.BLOCK_SIZE);
+      const height = bodyState.height ?? cachedSize?.height ?? (isGround ? BUILDER_CONSTANTS.GROUND_BLOCK_SIZE : BUILDER_CONSTANTS.BLOCK_SIZE);
+
+      const options: Matter.IBodyDefinition = {
+        isStatic: bodyState.isStatic,
+        label: bodyState.label,
+      };
+
+      if (bodyState.collisionFilter) {
+        options.collisionFilter = { ...bodyState.collisionFilter };
+      }
+      if (bodyState.friction !== undefined) options.friction = bodyState.friction;
+      if (bodyState.frictionStatic !== undefined) options.frictionStatic = bodyState.frictionStatic;
+      if (bodyState.frictionAir !== undefined) options.frictionAir = bodyState.frictionAir;
+      if (bodyState.restitution !== undefined) options.restitution = bodyState.restitution;
+      if (bodyState.density !== undefined) options.density = bodyState.density;
+      if (bodyState.isSensor !== undefined) options.isSensor = bodyState.isSensor;
+      if (bodyState.slop !== undefined) options.slop = bodyState.slop;
+      if (bodyState.sleepThreshold !== undefined) options.sleepThreshold = bodyState.sleepThreshold;
+
+      const created = bodyState.circleRadius && bodyState.circleRadius > 0
+        ? Matter.Bodies.circle(bodyState.position.x, bodyState.position.y, bodyState.circleRadius, options)
+        : Matter.Bodies.rectangle(bodyState.position.x, bodyState.position.y, width, height, options);
+
+      const extendedBody = created as ExtendedBody;
+      extendedBody.customId = bodyState.id;
+      extendedBody.ownerId = bodyState.ownerId ?? this.ownerCache.get(bodyState.id);
+      (extendedBody as { label?: string }).label = bodyState.label ?? this.labelCache.get(bodyState.id) ?? extendedBody.label;
+
+      const fill = isGround
+        ? (bodyState.groundColor ?? this.groundColorCache.get(bodyState.id) ?? bodyState.render.fillStyle)
+        : bodyState.render.fillStyle;
+      extendedBody.render.fillStyle = fill;
+      (extendedBody.render as { healthPercent?: number }).healthPercent = bodyState.render.healthPercent;
+
+      const spriteId = bodyState.spriteId ?? this.spriteIdCache.get(bodyState.id);
+      if (spriteId) {
+        const parts = spriteId.split(':');
+        if (parts.length >= 2) {
+          const sheet = parts[0];
+          const row = parseInt(parts[1], 10);
+          const col = parts[2] ? parseInt(parts[2], 10) : undefined;
+          const offsetX = bodyState.spriteOffsetX ?? (this.spriteOffsetXCache.get(bodyState.id) ?? 0);
+          const offsetY = bodyState.spriteOffsetY ?? (this.spriteOffsetYCache.get(bodyState.id) ?? 0);
+          const flipX = bodyState.spriteFlipX ?? (this.spriteFlipXCache.get(bodyState.id) ?? false);
+          const flipY = bodyState.spriteFlipY ?? (this.spriteFlipYCache.get(bodyState.id) ?? false);
+          const spriteWidth = bodyState.spriteWidth ?? this.spriteWidthCache.get(bodyState.id);
+          const spriteHeight = bodyState.spriteHeight ?? this.spriteHeightCache.get(bodyState.id);
+
+          const sprite: { sheet: string; row: number; offsetX: number; offsetY: number; col?: number; flipX?: boolean; flipY?: boolean; width?: number; height?: number } = {
+            sheet,
+            row,
+            offsetX,
+            offsetY,
+          };
+          if (col !== undefined) sprite.col = col;
+          if (flipX) sprite.flipX = flipX;
+          if (flipY) sprite.flipY = flipY;
+          if (spriteWidth !== undefined) sprite.width = spriteWidth;
+          if (spriteHeight !== undefined) sprite.height = spriteHeight;
+
+          (extendedBody as { sprite?: typeof sprite }).sprite = sprite;
+        }
+      }
+
+      const velocity = bodyState.velocity ?? { x: 0, y: 0 };
+
+      Matter.Body.setPosition(extendedBody, bodyState.position);
+      Matter.Body.setAngle(extendedBody, bodyState.angle);
+      Matter.Body.setVelocity(extendedBody, velocity);
+      Matter.Body.setAngularVelocity(extendedBody, bodyState.angularVelocity ?? 0);
+
+      if (bodyState.mass !== undefined && bodyState.mass > 0) {
+        Matter.Body.setMass(extendedBody, bodyState.mass);
+      }
+      if (bodyState.inertia !== undefined && bodyState.inertia > 0) {
+        Matter.Body.setInertia(extendedBody, bodyState.inertia);
+      }
+
+      extendedBody.force.x = 0;
+      extendedBody.force.y = 0;
+      extendedBody.torque = 0;
+      Matter.Sleeping.set(extendedBody, false);
+
+      physics.addBody(extendedBody);
+      this.bodies.set(bodyState.id, extendedBody);
+      bodyMap.set(bodyState.id, extendedBody);
+    });
+
+    const serializedConstraints = snapshot.constraints ?? [];
+    serializedConstraints.forEach(data => {
+      const bodyA = data.bodyAId ? bodyMap.get(data.bodyAId) : undefined;
+      const bodyB = data.bodyBId ? bodyMap.get(data.bodyBId) : undefined;
+
+      if ((data.bodyAId && !bodyA) || (data.bodyBId && !bodyB)) {
+        return;
+      }
+
+      const constraintOptions: Matter.IConstraintDefinition = {
+        pointA: { x: data.pointA.x, y: data.pointA.y },
+        pointB: { x: data.pointB.x, y: data.pointB.y },
+        length: data.length,
+        stiffness: data.stiffness,
+        damping: data.damping,
+      };
+
+      if (bodyA) constraintOptions.bodyA = bodyA;
+      if (bodyB) constraintOptions.bodyB = bodyB;
+
+      const constraint = Matter.Constraint.create(constraintOptions);
+      physics.addConstraint(constraint);
+      this.clientConstraints.set(data.id, constraint);
+    });
   }
 
   /**
@@ -541,6 +708,7 @@ export class NetworkedGame {
     if (!this.physics) return null;
 
     const allBodies = this.physics.getAllBodies();
+    const idByBody = new Map<Matter.Body, string>();
     
     const snapshot: NetworkSnapshot = {
       timestamp: Date.now(),
@@ -551,6 +719,8 @@ export class NetworkedGame {
         if (isNew) {
           this.sentBodies.add(id);
         }
+
+        idByBody.set(body, id);
         
         const block = (body as unknown as { block?: BaseBlock }).block;
         const isGround = body.isStatic && body.label === 'ground';
@@ -621,10 +791,49 @@ export class NetworkedGame {
           height: isNew && body.isStatic ? body.circleRadius ? undefined : (body.bounds?.max.y ?? 0) - (body.bounds?.min.y ?? 0) : undefined,
           velocity: { x: (body as unknown as { velocity?: { x: number; y: number } }).velocity?.x || 0, y: (body as unknown as { velocity?: { x: number; y: number } }).velocity?.y || 0 },
           angularVelocity: (body as unknown as { angularVelocity?: number }).angularVelocity || 0,
+          collisionFilter: body.collisionFilter ? { ...body.collisionFilter } : undefined,
+          friction: body.friction,
+          frictionStatic: body.frictionStatic,
+          frictionAir: body.frictionAir,
+          restitution: body.restitution,
+          density: (body as { density?: number }).density,
+          mass: body.mass,
+          inertia: body.inertia,
+          inverseMass: body.inverseMass,
+          inverseInertia: body.inverseInertia,
+          isSensor: body.isSensor,
+          slop: body.slop,
+          sleepThreshold: body.sleepThreshold,
         };
       }),
       effects: this.effectEvents.length > 0 ? [...this.effectEvents] : undefined,
     };
+
+    const constraints = this.physics.getAllConstraints();
+    if (constraints.length > 0) {
+      const serializedConstraints: SerializableConstraint[] = [];
+      constraints.forEach(constraint => {
+        const bodyAId = constraint.bodyA ? idByBody.get(constraint.bodyA) : undefined;
+        const bodyBId = constraint.bodyB ? idByBody.get(constraint.bodyB) : undefined;
+        const pointA = constraint.pointA ? { x: constraint.pointA.x, y: constraint.pointA.y } : { x: 0, y: 0 };
+        const pointB = constraint.pointB ? { x: constraint.pointB.x, y: constraint.pointB.y } : { x: 0, y: 0 };
+
+        serializedConstraints.push({
+          id: `constraint-${constraint.id}`,
+          bodyAId,
+          bodyBId,
+          pointA,
+          pointB,
+          length: constraint.length,
+          stiffness: constraint.stiffness,
+          damping: constraint.damping,
+        });
+      });
+
+      if (serializedConstraints.length > 0) {
+        snapshot.constraints = serializedConstraints;
+      }
+    }
     
     // Clear effect events after sending
     this.effectEvents = [];
@@ -724,11 +933,9 @@ export class NetworkedGame {
     }
 
     // Render
-    if (this.role === 'host' && this.physics) {
-      // Host renders from physics engine
+    if (this.physics) {
       this.renderer.renderPhysics(this.physics.getAllBodies());
     } else {
-      // Client: render latest snapshot directly (no interpolation)
       const bodies = this.getLatestSnapshotBodies();
       this.renderer.renderPhysics(bodies as Matter.Body[]);
     }
@@ -992,6 +1199,10 @@ export class NetworkedGame {
     if (this.countdownTimeoutId !== null) {
       window.clearTimeout(this.countdownTimeoutId);
       this.countdownTimeoutId = null;
+    }
+    if (this.physics && this.clientConstraints.size > 0) {
+      this.clientConstraints.forEach(constraint => this.physics!.removeConstraint(constraint));
+      this.clientConstraints.clear();
     }
     this.physics?.destroy();
     this.renderer.destroy();
