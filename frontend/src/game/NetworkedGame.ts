@@ -140,6 +140,11 @@ export class NetworkedGame {
   private latestSnapshot: NetworkSnapshot | null = null;
   private clientConstraints: Map<string, Matter.Constraint> = new Map();
 
+  // Client-side: state buffer for delayed rendering
+  private clientSimulatedTick = 0; // Current simulated tick (target - delay)
+  private clientPendingCorrections: Map<number, NetworkSnapshot> = new Map(); // Pending corrections by tick
+  private clientPhysicsStarted = false; // Track if client physics has started
+
   // Cooldowns per player (disabled)
   private buildCooldowns: Map<string, number> = new Map();
   
@@ -164,6 +169,13 @@ export class NetworkedGame {
   private pendingInputs: Map<string, { playerId: string; bindingId: string; phase: 'press' | 'release' | 'change'; activateAt: number; payload?: { [k: string]: unknown } }[]> = new Map();
 
   private inputController: InputController | null = null;
+
+  // Client-side: Store the distance off of target for the last 5 snapshots
+  private lastNSnapshotDistances: number[] = [];
+  private readonly DistanceAverageWindow = 15;
+  private readonly ALLOWED_DEVIATION = 3;
+  private readonly BUFFER_TICKS = 4;
+
 
   constructor(config: NetworkedGameConfig) {
     this.canvas = config.canvas;
@@ -201,8 +213,6 @@ export class NetworkedGame {
     if (this.role === 'host' && this.physics) {
       this.setupEffectCapture();
       // Physics will start in onConnected callback
-    } else if (this.role === 'client' && this.physics) {
-      this.physics.start();
     }
     
     // Initialize networking
@@ -474,13 +484,44 @@ export class NetworkedGame {
     // Treat incoming state as a network snapshot
     const snapshot = { ...(state as unknown as NetworkSnapshot), _receivedAt: Date.now() } as NetworkSnapshot;
     
-    // Discard out-of-order packets (older tick)
-    if (snapshot.tick < this.lastReceivedTick) {
-      console.warn(`Discarding out-of-order packet: tick ${snapshot.tick} < ${this.lastReceivedTick}`);
+    this.lastReceivedTick = snapshot.tick;
+    // console.log(`Client received snapshot with tick: ${snapshot.tick}, lastReceivedTick: ${this.lastReceivedTick}, clientSimulatedTick: ${this.clientSimulatedTick}`);
+    
+    // Start client physics on first snapshot
+    if (!this.clientPhysicsStarted && this.role === 'client' && this.physics) {
+      this.physics.start();
+      this.clientPhysicsStarted = true;
+      // Initialize simulated tick from first snapshot (will be decremented to account for delay)
+      this.clientSimulatedTick = Math.max(0, snapshot.tick);
+    }
+    this.lastNSnapshotDistances.push(snapshot.tick - this.clientSimulatedTick);
+    if (this.lastNSnapshotDistances.length > this.DistanceAverageWindow) {
+      this.lastNSnapshotDistances.shift();
+    }
+    const averageDistance = this.lastNSnapshotDistances.reduce((a, b) => a + b, 0) / this.lastNSnapshotDistances.length;
+    // console.log(`Last 5 snapshots: ${this.lastNSnapshotDistances.join(', ')}`);
+    // console.log(`Average distance off delay ticks: ${averageDistance - this.BUFFER_TICKS}`);
+    if (averageDistance - this.BUFFER_TICKS > this.ALLOWED_DEVIATION) {
+      console.warn(`Average distance off delay ticks is too high: ${averageDistance - this.BUFFER_TICKS}`);
+      // adjust the current simulated tick to catch up
+      this.clientSimulatedTick += 1;
+      // decrement all the last five snapshot distances by 1 to reflect the new simulated tick
+      this.lastNSnapshotDistances = this.lastNSnapshotDistances.map(d => d - 1);
+    } else if (averageDistance - this.BUFFER_TICKS < - this.ALLOWED_DEVIATION) {
+      console.warn(`Average distance off delay ticks is too low: ${averageDistance - this.BUFFER_TICKS}`);
+      // adjust the current simulated tick to catch up
+      this.clientSimulatedTick -= 1;
+      // increment all the last five snapshot distances by 1 to reflect the new simulated tick
+      this.lastNSnapshotDistances = this.lastNSnapshotDistances.map(d => d + 1);
+    }
+    // Handle correction: ignore if already simulated past this tick
+    if (snapshot.tick > this.clientSimulatedTick) {
+      // Queue for application when we reach this tick
+      this.clientPendingCorrections.set(snapshot.tick, snapshot);
+    } else {
       return;
     }
-    
-    this.lastReceivedTick = snapshot.tick;
+    // If snapshot.tick <= clientSimulatedTick, ignore (already passed)
     
     // Cache metadata (sent once per body)
     snapshot.bodies.forEach(body => {
@@ -499,7 +540,7 @@ export class NetworkedGame {
     // Just store the latest snapshot
     this.latestSnapshot = snapshot;
 
-    this.applyClientSnapshot(snapshot);
+    // Don't apply snapshot immediately - corrections are queued and applied when we reach their tick
 
     // Process effect events
     if (snapshot.effects) {
@@ -734,7 +775,7 @@ export class NetworkedGame {
     
     const snapshot: NetworkSnapshot = {
       timestamp: Date.now(),
-      tick: this.snapshotTick++, // Add tick to snapshot
+      tick: this.snapshotTick, // Add tick to snapshot
       bodies: allBodies.map(body => {
         const id = (body as ExtendedBody).customId || `static-${body.id}`;
         const isNew = !this.sentBodies.has(id);
@@ -926,12 +967,34 @@ export class NetworkedGame {
   }
 
   /**
+   * Capture current client simulation state for buffering
+   */
+  private captureClientState(): void {
+    if (this.role !== 'client' || !this.physics) return;
+    
+    // Check if there's a pending correction for the current tick and apply it
+    if (this.clientPendingCorrections.has(this.clientSimulatedTick)) {
+      const correction = this.clientPendingCorrections.get(this.clientSimulatedTick)!;
+      this.clientPendingCorrections.delete(this.clientSimulatedTick);
+      this.applyClientSnapshot(correction);
+    }
+    
+    // Increment simulation tick every frame (physics advances)
+    this.clientSimulatedTick++;
+  }
+
+  /**
    * Main game loop
    */
   private gameLoop = (): void => {
     if (!this.isRunning) return;
 
     const now = Date.now();
+
+    // Client: record simulation state to buffer
+    if (this.role === 'client' && this.clientPhysicsStarted) {
+      this.captureClientState();
+    }
 
     // Host: apply any due delayed generic inputs
     if (this.role === 'host' && this.physics && this.pendingInputs.size > 0) {
@@ -968,6 +1031,7 @@ export class NetworkedGame {
         this.syncInterval = 50;
       }
       
+      this.snapshotTick++; // Increment tick for each frame
 
       if (now - this.lastSyncTime >= this.syncInterval) {
         const state = this.serializeState();
@@ -988,11 +1052,14 @@ export class NetworkedGame {
     }
 
     // Render
-    if (this.physics) {
+    if (this.role === 'host' && this.physics) {
+      // Host renders current simulation state
       this.renderer.renderPhysics(this.physics.getAllBodies());
-    } else {
-      const bodies = this.getLatestSnapshotBodies();
-      this.renderer.renderPhysics(bodies as Matter.Body[]);
+    } else if (this.role === 'client') {
+      // Client renders delayed simulation directly
+      if (this.physics) {
+        this.renderer.renderPhysics(this.physics.getAllBodies());
+      }
     }
 
     // Render countdown overlay
