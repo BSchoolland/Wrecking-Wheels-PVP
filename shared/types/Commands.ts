@@ -82,7 +82,8 @@ export interface UIState {
  */
 export type GameEvent = 
   | { type: 'player-joined'; playerId: string }
-  | { type: 'countdown-start' };
+  | { type: 'countdown-start' }
+  | { type: 'game-over'; winner: string; loser: string };
 
 /**
  * Network message wrapper

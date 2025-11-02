@@ -62,8 +62,7 @@ import type { BlockData } from './blocks/BaseBlock';
 
 export function blockFromData(data: BlockData): BaseBlock {
   const block = createBlock(data.type as BlockType, data.gridX, data.gridY);
-  // Overwrite id from save since createBlock generates a new one
-  (block as unknown as { id: string }).id = data.id;
+  // Don't overwrite the unique ID from createBlock - keep it to avoid collisions between contraptions
   block.loadFromData(data);
   return block;
 }

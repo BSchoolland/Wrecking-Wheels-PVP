@@ -81,6 +81,7 @@ interface NetworkedGameConfig {
   playerId: string;
   contraption?: ContraptionSaveData; // Make optional
   onContraptionSpawned?: () => void;
+  onReturnToMenu?: () => void;
 }
 
 export class NetworkedGame {
@@ -92,6 +93,7 @@ export class NetworkedGame {
   private renderer: Renderer;
   private network: NetworkManager;
   private onContraptionSpawned?: () => void;
+  private onReturnToMenu?: () => void;
   private savedContraption: ContraptionSaveData | null = null;
   
   private isRunning = false;
@@ -141,6 +143,11 @@ export class NetworkedGame {
   private countdownValue: number | 'FIGHT' | null = null;
   private countdownTimeoutId: number | null = null;
   
+  // Win state
+  private winState: { winner: string; loser: string } | null = null;
+  private contraceptionsByPlayer: Map<string, Set<string>> = new Map(); // playerId -> set of contraption body IDs
+  private playerContrapctionCores: Map<string, string> = new Map(); // playerId -> coreBodyId
+  
   public energy: number = 0;
 
   // Host-side: schedule generic block inputs keyed by binding id
@@ -154,6 +161,7 @@ export class NetworkedGame {
     this.playerId = config.playerId;
     this.savedContraption = config.contraption || null;
     this.onContraptionSpawned = config.onContraptionSpawned;
+    this.onReturnToMenu = config.onReturnToMenu;
     
     // No resources
     this.energy = 0;
@@ -204,9 +212,6 @@ export class NetworkedGame {
         this.bothPlayersConnected = false;
       },
     });
-
-    // Disable click spawn
-    this.setupClickHandler();
 
     // Input controller setup
     const sendGeneric = (bindingId: string, phase: 'press' | 'release' | 'change', payload?: { [k: string]: unknown }) => {
@@ -312,15 +317,6 @@ export class NetworkedGame {
       originalExplosion(x, y, radius, durationMs);
       this.effectEvents.push({ type: 'explosion', x, y, radius });
     };
-  }
-
-  /**
-   * Set up click handler to spawn contraptions
-   */
-  private setupClickHandler(): void {
-    this.canvas.addEventListener('click', (_e) => {
-      // disabled
-    });
   }
 
   /**
@@ -531,6 +527,10 @@ export class NetworkedGame {
         // Client receives countdown-start event from host
         this.startCountdown();
         break;
+      case 'game-over':
+        // Client receives game-over event from host
+        this.winState = { winner: event.winner, loser: event.loser };
+        break;
     }
   }
 
@@ -736,6 +736,12 @@ export class NetworkedGame {
     // Render countdown overlay
     this.renderCountdown();
 
+    // Check and render win condition
+    if (this.bothPlayersReady && !this.winState) {
+      this.checkWinCondition();
+    }
+    this.renderWinScreen();
+
     this.animationFrameId = requestAnimationFrame(this.gameLoop);
   };
 
@@ -779,6 +785,86 @@ export class NetworkedGame {
     }
     
     // Restore context
+    ctx.restore();
+  }
+
+  /**
+   * Check if a player's contraption is dead and update win state
+   */
+  private checkWinCondition(): void {
+    if (this.winState) return; // Game already over
+    if (!this.bothPlayersConnected) return; // Not ready yet
+    
+    // Get all player IDs
+    const players = Array.from(this.readyStates.keys());
+    if (players.length < 2) return;
+    
+    const [player1, player2] = players;
+    const bodies = this.physics?.getAllBodies() || [];
+    
+    // Count core blocks per player
+    const coresPerPlayer = new Map<string, number>();
+    coresPerPlayer.set(player1, 0);
+    coresPerPlayer.set(player2, 0);
+    
+    bodies.forEach(body => {
+      const block = (body as unknown as { block?: { type?: string } }).block;
+      if (block?.type === 'core') {
+        const ownerId = (body as ExtendedBody).ownerId;
+        if (ownerId) {
+          coresPerPlayer.set(ownerId, (coresPerPlayer.get(ownerId) || 0) + 1);
+        }
+      }
+    });
+    
+    // Check if one player has no cores left
+    const player1HasCore = coresPerPlayer.get(player1) || 0 > 0;
+    const player2HasCore = coresPerPlayer.get(player2) || 0 > 0;
+    
+    if (!player1HasCore && player2HasCore) {
+      this.winState = { winner: player2, loser: player1 };
+      this.network.sendEvent({ type: 'game-over', winner: player2, loser: player1 });
+    } else if (player1HasCore && !player2HasCore) {
+      this.winState = { winner: player1, loser: player2 };
+      this.network.sendEvent({ type: 'game-over', winner: player1, loser: player2 });
+    }
+  }
+
+  /**
+   * Render win/loss overlay
+   */
+  private renderWinScreen(): void {
+    if (!this.winState) return;
+    
+    const ctx = this.renderer.getContext();
+    const width = this.canvas.width;
+    const height = this.canvas.height;
+    
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    
+    // Semi-transparent overlay
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.fillRect(0, 0, width, height);
+    
+    // Win/Loss text
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const fontSize = Math.min(width, height) * 0.1;
+    ctx.font = `bold ${fontSize}px Arial`;
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.8)';
+    ctx.shadowBlur = 20;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    
+    if (this.winState.winner === this.playerId) {
+      ctx.fillStyle = '#00ff00';
+      ctx.fillText('YOU WIN!', width / 2, height / 2);
+    } else {
+      ctx.fillStyle = '#ff0000';
+      ctx.fillText('YOU LOST!', width / 2, height / 2);
+    }
+    
     ctx.restore();
   }
 
@@ -878,6 +964,12 @@ export class NetworkedGame {
     return result;
   }
 
+  /**
+   * Get the current win state
+   */
+  getWinState(): { winner: string; loser: string } | null {
+    return this.winState;
+  }
 
   /**
    * Stop the game

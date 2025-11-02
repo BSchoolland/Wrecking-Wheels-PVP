@@ -52,6 +52,7 @@ function App() {
   // Energy/health removed in arena mode
   const [isWaiting, setIsWaiting] = useState(false);
   const [contraptionToTest, setContraptionToTest] = useState<ContraptionSaveData | null>(null);
+  const [gameWinState, setGameWinState] = useState<'win' | 'loss' | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const bgCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -92,6 +93,11 @@ function App() {
             lobbyId: data.lobbyId,
             playerId,
             contraption: selectedContraption || undefined,
+            onReturnToMenu: () => {
+              gameRef.current?.destroy();
+              gameRef.current = null;
+              setView('menu');
+            },
           });
           gameRef.current.start();
         }
@@ -120,6 +126,11 @@ function App() {
               lobbyId: id,
               playerId,
               contraption: selectedContraption || undefined,
+              onReturnToMenu: () => {
+                gameRef.current?.destroy();
+                gameRef.current = null;
+                setView('menu');
+              },
             });
             gameRef.current.start();
           }
@@ -212,6 +223,11 @@ function App() {
           lobbyId,
           playerId,
           contraption: selectedContraption,
+          onReturnToMenu: () => {
+            gameRef.current?.destroy();
+            gameRef.current = null;
+            setView('menu');
+          },
         });
         gameRef.current.start();
       }
@@ -265,6 +281,19 @@ function App() {
     };
   }, []);
 
+  // Poll for game win state
+  useEffect(() => {
+    if (view === 'game' && gameRef.current) {
+      const interval = setInterval(() => {
+        const winState = gameRef.current?.getWinState();
+        if (winState) {
+          setGameWinState(winState.winner === playerId ? 'win' : 'loss');
+        }
+      }, 100);
+      return () => clearInterval(interval);
+    }
+  }, [view, playerId]);
+
   return (
     <div className="app">
       {(view !== 'game' && view !== 'lobby') && (
@@ -278,6 +307,31 @@ function App() {
           ref={canvasRef}
           style={{ display: view === 'lobby' ? 'none' : 'block' }}
         />
+      )}
+      {view === 'game' && gameWinState && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10,
+          pointerEvents: 'none'
+        }}>
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              gameRef.current?.destroy();
+              gameRef.current = null;
+              setGameWinState(null);
+              setView('menu');
+            }}
+            style={{ pointerEvents: 'auto', marginTop: '80px' }}
+          >
+            Return to Menu
+          </button>
+        </div>
       )}
       {view !== 'game' && (
         <div className="overlay">
