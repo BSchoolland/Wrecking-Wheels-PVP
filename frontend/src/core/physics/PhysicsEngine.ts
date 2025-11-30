@@ -25,6 +25,7 @@ export class PhysicsEngine {
   private engine: Matter.Engine;
   private world: Matter.World;
   private runner: Matter.Runner | null = null;
+  private eventsInitialized = false;
   private bodiesToRemove: Set<Matter.Body> = new Set();
   private constraintsToRemove: Set<Matter.Constraint> = new Set();
   private pendingForces: Map<number, { x: number, y: number }> = new Map();
@@ -306,48 +307,52 @@ export class PhysicsEngine {
    * Start the physics simulation with fixed timestep
    */
   start(): void {
+    if (!this.eventsInitialized) {
+      this.eventsInitialized = true;
+      // Invoke optional per-body tick hooks so blocks can own their logic
+      Matter.Events.on(this.engine, 'beforeUpdate', () => {
+        const bodies = Matter.Composite.allBodies(this.world);
+        for (const body of bodies) {
+          const anyBody = body as unknown as { onTick?: () => void };
+          if (typeof anyBody.onTick === 'function') anyBody.onTick();
+
+          // Apply simple torque to wheel bodies based on per-player input
+          const ownerId = (body as unknown as { ownerId?: string }).ownerId;
+          if (ownerId && body.label?.endsWith('-wheel')) {
+            let input = this.wheelInput.get(ownerId) || 0;
+            if (!this.wheelInput.has(ownerId) && this.botPlayers.has(ownerId)) input = 1; // bots drive forward by default
+            (body as unknown as { currentWheelInput?: number }).currentWheelInput = input;
+          }
+          // Apply rocket hold state: thrust only while held
+          if (ownerId && body.label?.endsWith('-rocket')) {
+            const hold = this.rocketHold.get(ownerId) || false;
+            (body as unknown as { rocketThrusting?: boolean }).rocketThrusting = hold;
+            // Expose sprite column for rendering (0 = idle, 1 = active)
+            (body as unknown as { spriteCol?: number }).spriteCol = hold ? 1 : 0;
+          }
+        }
+
+        // Flush queued forces (apply at body center for stability)
+        if (this.pendingForces.size > 0) {
+          this.pendingForces.forEach((force, bodyId) => {
+            const target = bodies.find(b => b.id === bodyId);
+            if (target && !target.isStatic) {
+              Matter.Body.applyForce(target, target.position, force);
+            }
+          });
+          this.pendingForces.clear();
+        }
+      });
+      // Clean up dead blocks after physics update
+      Matter.Events.on(this.engine, 'afterUpdate', () => {
+        this.cleanupDeadBlocks();
+        this.updateMapShrinking();
+      });
+    }
+
     this.runner = Matter.Runner.create({
       delta: PHYSICS_CONSTANTS.FIXED_TIMESTEP,
       isFixed: true,
-    });
-    // Invoke optional per-body tick hooks so blocks can own their logic
-    Matter.Events.on(this.engine, 'beforeUpdate', () => {
-      const bodies = Matter.Composite.allBodies(this.world);
-      for (const body of bodies) {
-        const anyBody = body as unknown as { onTick?: () => void };
-        if (typeof anyBody.onTick === 'function') anyBody.onTick();
-
-        // Apply simple torque to wheel bodies based on per-player input
-        const ownerId = (body as unknown as { ownerId?: string }).ownerId;
-        if (ownerId && body.label?.endsWith('-wheel')) {
-          let input = this.wheelInput.get(ownerId) || 0;
-          if (!this.wheelInput.has(ownerId) && this.botPlayers.has(ownerId)) input = 1; // bots drive forward by default
-          (body as unknown as { currentWheelInput?: number }).currentWheelInput = input;
-        }
-        // Apply rocket hold state: thrust only while held
-        if (ownerId && body.label?.endsWith('-rocket')) {
-          const hold = this.rocketHold.get(ownerId) || false;
-          (body as unknown as { rocketThrusting?: boolean }).rocketThrusting = hold;
-          // Expose sprite column for rendering (0 = idle, 1 = active)
-          (body as unknown as { spriteCol?: number }).spriteCol = hold ? 1 : 0;
-        }
-      }
-
-      // Flush queued forces (apply at body center for stability)
-      if (this.pendingForces.size > 0) {
-        this.pendingForces.forEach((force, bodyId) => {
-          const target = bodies.find(b => b.id === bodyId);
-          if (target && !target.isStatic) {
-            Matter.Body.applyForce(target, target.position, force);
-          }
-        });
-        this.pendingForces.clear();
-      }
-    });
-    // Clean up dead blocks after physics update
-    Matter.Events.on(this.engine, 'afterUpdate', () => {
-      this.cleanupDeadBlocks();
-      this.updateMapShrinking();
     });
     Matter.Runner.run(this.runner, this.engine);
   }

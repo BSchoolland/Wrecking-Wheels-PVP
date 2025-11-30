@@ -165,7 +165,9 @@ function handleLeaveLobby(clientId: string) {
 }
 
 const PORT = process.env.PORT || 3001;
+const HOST = '0.0.0.0';
 
-server.listen(PORT, () => {
+server.listen(PORT, HOST, () => {
+  console.log(`🎮 Server listening on http://0.0.0.0:${PORT}`);
 });
 
