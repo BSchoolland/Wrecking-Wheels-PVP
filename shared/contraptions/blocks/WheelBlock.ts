@@ -141,6 +141,7 @@ export class WheelBlock extends BaseBlock {
 
 // Register input bindings for wheels at module load
 (() => {
+  console.log('[WheelBlock] Registering wheel input bindings');
   InputRegistry.register({
     id: 'wheel-axis',
     keys: ['a', 'A', 'd', 'D'],

@@ -47,6 +47,7 @@ interface SerializableBody {
   spriteWidth?: number;
   spriteHeight?: number;
   groundColor?: string;
+  contraptionDirection?: number;
 }
 
 interface SerializableConstraint {
@@ -370,10 +371,11 @@ export class NetworkedGame {
         } else if (spec.shape === 'rectangle') {
           created = Matter.Bodies.rectangle(bodyState.position.x, bodyState.position.y, spec.width!, spec.height!, options);
         } else if (spec.shape === 'polygon') {
-          const isMirrored = bodyState.ownerId && bodyState.ownerId !== this.playerId;
+          // For polygons (spikes), apply mirroring based on contraption direction
+          const dir = bodyState.contraptionDirection ?? 1;
           const vertices = spec.vertices!.map(v => ({
-            x: isMirrored ? bodyState.position.x + v.x : bodyState.position.x - v.x,
-            y: isMirrored ? bodyState.position.y + v.y : bodyState.position.y - v.y
+            x: bodyState.position.x + v.x * dir,
+            y: bodyState.position.y + v.y
           }));
           created = Matter.Bodies.fromVertices(bodyState.position.x, bodyState.position.y, [vertices], options);
         } else {

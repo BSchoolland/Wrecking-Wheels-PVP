@@ -13,7 +13,7 @@ export class HingeBlock extends BaseBlock {
   static readonly HINGE_RADIUS = 8;
   static readonly ATTACHMENT_HEIGHT = 8;
   static readonly INPUT_DELAY_MS = 500;
-  
+
   // Store bodies for attachment face lookup
   private attachmentFaceTopBody: Matter.Body | undefined;
   private attachmentFaceBottomBody: Matter.Body | undefined;
@@ -25,19 +25,6 @@ export class HingeBlock extends BaseBlock {
   private rotationDirection: number = 1;
   private angleConstraint: Matter.Constraint | null = null;
   private hingeBody: Matter.Body | undefined;
-  // Static per-player input state, controlled by Q/E bindings
-  private static playerInput: Map<string, number> = new Map();
-  static setPlayerInput(playerId: string, value: number): void {
-    const v = Math.max(-1, Math.min(1, value));
-    if (v === 0) HingeBlock.playerInput.delete(playerId); else HingeBlock.playerInput.set(playerId, v);
-  }
-  static clearPlayerInput(playerId: string): void {
-    HingeBlock.playerInput.delete(playerId);
-  }
-  static getPlayerInput(playerId: string | undefined): number {
-    if (!playerId) return 0;
-    return HingeBlock.playerInput.get(playerId) || 0;
-  }
   
   constructor(id: string, gridX: number, gridY: number) {
     super(id, 'hinge', gridX, gridY);
@@ -187,10 +174,9 @@ export class HingeBlock extends BaseBlock {
     (hingeBody as unknown as { spriteRow?: number }).spriteRow = 8;
 
     this.hingeBody = hingeBody;
-    // Per-tick: read input from HingeBlock static map by ownerId and rotate
+    // Per-tick: read per-body hinge input (set by PhysicsEngine) and rotate
     (hingeBody as unknown as { onTick?: () => void }).onTick = () => {
-      const ownerId = (hingeBody as unknown as { ownerId?: string }).ownerId;
-      const input = HingeBlock.getPlayerInput(ownerId);
+      const input = (hingeBody as unknown as { currentHingeInput?: number }).currentHingeInput || 0;
       this.update(input);
     };
     
@@ -306,8 +292,10 @@ export class HingeBlock extends BaseBlock {
     keys: ['q', 'Q', 'e', 'E'],
     pressDelayMs: HingeBlock.INPUT_DELAY_MS,
     apply: (ctx, phase, payload) => {
+      const physics = ctx.physics;
+      if (!physics) return;
       const value = phase === 'release' ? 0 : (typeof payload?.value === 'number' ? (payload.value as number) : 0);
-      if (value === 0) HingeBlock.clearPlayerInput(ctx.playerId); else HingeBlock.setPlayerInput(ctx.playerId, value);
+      physics.setHingeInput(ctx.playerId, value);
     },
     onLocalVisual: (_effects, _playerId, _phase, _payload) => {
       // No local visuals for hinge yet

@@ -11,7 +11,9 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
 import path from 'path';
 import { GameSession, type NetworkSnapshot } from './game/GameSession';
+import './game/InputBindings';
 import type { GameCommand, UIState, GameEvent } from '@shared/types/Commands';
+import '@shared/contraptions';
 
 const app = express() as any;
 const server = createServer(app as any);
@@ -28,7 +30,9 @@ app.get('/health', (_req: Request, res: Response) => {
 
 // API routes will be added here
 const apiExt = process.env.NODE_ENV === 'production' ? '.js' : '.ts';
-app.use('/api/matchmaking', (await import(`./api/matchmaking${apiExt}`)).default);
+const matchmakingModule = await import(`./api/matchmaking${apiExt}`);
+app.use('/api/matchmaking', matchmakingModule.default);
+const lobbyPlayerOrderFromMatchmaking = matchmakingModule.lobbyPlayerOrder;
 
 // Serve built frontend in production from the project's frontend/dist
 if (process.env.NODE_ENV === 'production') {
@@ -126,7 +130,9 @@ function handleJoinLobby(clientId: string, lobbyId: string, playerId: string) {
 
   // If we now have 2 players, create the game session
   if (lobbyClients.length === 1) {
-    const players = [lobbyClients[0].playerId!, playerId];
+    // Use the correct player order from matchmaking, not WS connection order
+    const correctPlayerOrder = lobbyPlayerOrderFromMatchmaking.get(lobbyId);
+    const players = correctPlayerOrder || [lobbyClients[0].playerId!, playerId];
     createGameSession(lobbyId, players);
     
     // Notify both clients that the game is starting

@@ -50,6 +50,7 @@ export class InputController {
         b.onLocalVisual(this.config.effects, this.config.playerId, 'press', payload);
       }
       if (this.config.sendCommand) {
+        console.log(`[InputController] Sending input: bindingId=${b.id}, phase=press, playerId=${this.config.playerId}`);
         this.config.sendCommand(b.id, 'press', payload);
       } else if (this.config.physics) {
         const delay = b.pressDelayMs || 0;
@@ -77,6 +78,7 @@ export class InputController {
         b.onLocalVisual(this.config.effects, this.config.playerId, 'release', payload);
       }
       if (this.config.sendCommand) {
+        console.log(`[InputController] Sending input: bindingId=${b.id}, phase=release, playerId=${this.config.playerId}`);
         this.config.sendCommand(b.id, 'release', payload);
       } else if (this.config.physics) {
         const t = this.pendingTimers.get(b.id);

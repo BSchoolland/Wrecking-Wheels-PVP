@@ -48,6 +48,7 @@ export class PhysicsEngine {
   private pendingForces: Map<number, { x: number, y: number }> = new Map();
   private contraptions: Map<string, ContraptionLike> = new Map();
   private wheelInput: Map<string, number> = new Map();
+  private hingeInput: Map<string, number> = new Map();
   private effects: EffectsInterface | null = null;
   private activeCollisions: Map<string, number> = new Map();
   private botPlayers: Set<string> = new Set();
@@ -301,6 +302,10 @@ export class PhysicsEngine {
             if (!this.wheelInput.has(ownerId) && this.botPlayers.has(ownerId)) input = 1;
             (body as unknown as { currentWheelInput?: number }).currentWheelInput = input;
           }
+          if (ownerId && body.label?.endsWith('-hinge')) {
+            const input = this.hingeInput.get(ownerId) || 0;
+            (body as unknown as { currentHingeInput?: number }).currentHingeInput = input;
+          }
           if (ownerId && body.label?.endsWith('-rocket')) {
             const hold = this.rocketHold.get(ownerId) || false;
             (body as unknown as { rocketThrusting?: boolean }).rocketThrusting = hold;
@@ -439,6 +444,11 @@ export class PhysicsEngine {
     this.stop();
     Matter.World.clear(this.world, false);
     Matter.Engine.clear(this.engine);
+  }
+
+  public setHingeInput(playerId: string, value: number): void {
+    const v = Math.max(-1, Math.min(1, value));
+    if (v === 0) this.hingeInput.delete(playerId); else this.hingeInput.set(playerId, v);
   }
 
   public setWheelInput(playerId: string, value: number): void {

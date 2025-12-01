@@ -18,7 +18,7 @@ export interface ContraptionSaveData {
   isBot?: boolean;
   vehicleClass?: VehicleClass;
   }
-export let CONTRAPTION_DEBUG = false;
+export let CONTRAPTION_DEBUG = true;
 export function setContraptionDebug(value: boolean) { CONTRAPTION_DEBUG = value; }
 
 export let CONTRAPTION_STATIC_DEBUG = false;
@@ -167,6 +167,7 @@ export class Contraption {
         (body as unknown as { contraptionId?: string }).contraptionId = this.id;
         (body as unknown as { team?: string }).team = this.team;
         (body as unknown as { blockId?: string }).blockId = block.id;
+        (body as unknown as { contraptionDirection?: number }).contraptionDirection = this.direction;
         // Only attach block reference to primary body
         if (body === result.primaryBody) {
           (body as unknown as { block?: BaseBlock }).block = block;

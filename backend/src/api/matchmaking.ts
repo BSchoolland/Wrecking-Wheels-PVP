@@ -21,6 +21,7 @@ interface Lobby {
 }
 
 const lobbies = new Map<string, Lobby>();
+const lobbyPlayerOrder = new Map<string, string[]>(); // Correct player order (first joiner, second joiner)
 
 /**
  * Create a new lobby
@@ -230,6 +231,8 @@ router.post('/queue/join', (req: Request, res: Response) => {
   lobby.status = 'ready';
 
   const lobbyId = lobby.id;
+  // Store the correct player order: [host, client]
+  lobbyPlayerOrder.set(lobbyId, [...lobby.players]);
   waitingLobbyId = undefined; // waiting lobby consumed
   return res.json({ success: true, lobbyId, role: 'client', status: 'ready', players: lobby.players });
 });
@@ -259,4 +262,5 @@ router.post('/queue/leave', (req: Request, res: Response) => {
   return res.json({ success: true });
 });
 
+export { lobbyPlayerOrder };
 export default router;

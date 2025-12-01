@@ -41,6 +41,7 @@ interface SerializableBody {
   spriteWidth?: number;
   spriteHeight?: number;
   groundColor?: string;
+  contraptionDirection?: number;
 }
 
 interface SerializableConstraint {
@@ -193,6 +194,7 @@ export class GameSession {
           const baseDelay = c.phase === 'press' ? (binding?.pressDelayMs || 0) : 0;
           const activateAt = now + baseDelay;
           const list = this.pendingInputs.get(c.bindingId) || [];
+          console.log(`[GameSession] Input received: bindingId=${c.bindingId}, phase=${c.phase}, playerId=${c.playerId}, delay=${baseDelay}ms, found=${!!binding}`);
           list.push({ playerId: c.playerId, bindingId: c.bindingId, phase: c.phase, activateAt, payload: c.payload });
           this.pendingInputs.set(c.bindingId, list);
         }
@@ -227,6 +229,8 @@ export class GameSession {
   }
 
   private spawnContraption(x: number, y: number, playerId: string, contraptionData: ContraptionData): void {
+    // Always assign direction based on join order: first player (index 0) faces right (direction 1),
+    // second player (index 1) faces left (direction -1)
     const playerIndex = this.players.indexOf(playerId);
     const direction = playerIndex === 0 ? 1 : -1;
     const team = playerId;
@@ -279,6 +283,7 @@ export class GameSession {
         const remain: typeof list = [];
         for (const item of list) {
           if (item.activateAt <= now) {
+            console.log(`[GameSession] Applying input: bindingId=${bindingId}, phase=${item.phase}, playerId=${item.playerId}`);
             binding.apply({ role: 'host', playerId: item.playerId, physics: this.physics }, item.phase, item.payload);
           } else {
             remain.push(item);
@@ -439,6 +444,7 @@ export class GameSession {
           spriteWidth: spriteWidth !== undefined ? spriteWidth : undefined,
           spriteHeight: spriteHeight !== undefined ? spriteHeight : undefined,
           groundColor: isGround && isNew ? ((body.render as Matter.IBodyRenderOptions)?.fillStyle || '#555555') : undefined,
+          contraptionDirection: (body as unknown as { contraptionDirection?: number }).contraptionDirection,
         };
       }),
       effects: this.effectEvents.length > 0 ? [...this.effectEvents] : undefined,

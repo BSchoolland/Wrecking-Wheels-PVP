@@ -40,10 +40,15 @@ class InputRegistryImpl {
       arr.push(binding);
       this.keyToBindings.set(k, arr);
     }
+    console.log(`[InputRegistry] Registered binding: ${binding.id} with keys: ${keys.join(', ')}`);
   }
 
   getById(id: string): BlockInputBinding | undefined {
-    return this.bindings.get(id);
+    const binding = this.bindings.get(id);
+    if (!binding) {
+      console.warn(`[InputRegistry] Binding not found: ${id}. Available: ${Array.from(this.bindings.keys()).join(', ')}`);
+    }
+    return binding;
   }
 
   getByKey(key: string): BlockInputBinding[] {
