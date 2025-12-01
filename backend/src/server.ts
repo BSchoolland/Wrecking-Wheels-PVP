@@ -1,29 +1,45 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
+/* eslint-disable @typescript-eslint/no-unsafe-argument */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 /**
  * Backend Server - Thin server for matchmaking, storage, and signaling
  * Does NOT run game logic or physics
  */
 
-import express from 'express';
+import express, { type Request, type Response } from 'express';
 import cors from 'cors';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer } from 'http';
+import path from 'path';
+// Request/Response types imported above
 
-const app = express();
-const server = createServer(app);
-const wss = new WebSocketServer({ server });
+const app = express() as any;
+const server = createServer(app as any);
+const wss = new WebSocketServer({ server, path: '/ws' });
 
 // Middleware
-app.use(cors());
+app.use((cors as any)());
 app.use(express.json());
 
 // Health check
-app.get('/health', (_req, res) => {
+app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok', timestamp: Date.now() });
 });
 
 // API routes will be added here
 const apiExt = process.env.NODE_ENV === 'production' ? '.js' : '.ts';
 app.use('/api/matchmaking', (await import(`./api/matchmaking${apiExt}`)).default);
+
+// Serve built frontend in production from the project's frontend/dist
+if (process.env.NODE_ENV === 'production') {
+  const staticPath = path.join(process.cwd(), '..', 'frontend', 'dist');
+  app.use(express.static(staticPath));
+
+  // Fallback to index.html for client-side routing
+  app.get('*', (_req: Request, res: Response) => {
+    res.sendFile(path.join(staticPath, 'index.html'));
+  });
+}
 
 // WebSocket connection management
 interface WSClient {
@@ -36,19 +52,23 @@ interface WSClient {
 const clients = new Map<string, WSClient>();
 
 // WebSocket for lobby and signaling
-wss.on('connection', (ws) => {
+wss.on('connection', (ws: WebSocket) => {
   const clientId = `client-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
   clients.set(clientId, { ws, id: clientId });
-  
-  if (process.env.NODE_ENV !== 'production') console.log(`Client connected: ${clientId}`);
 
   // Send client their ID
   ws.send(JSON.stringify({ type: 'connected', clientId }));
 
-  ws.on('message', (message) => {
+  ws.on('message', (message: string | Buffer | ArrayBuffer | Buffer[]) => {
     try {
-      const data = JSON.parse(message.toString());
-      if (process.env.NODE_ENV !== 'production') console.log('Received:', data.type, 'from', clientId);
+      const text = typeof message === 'string'
+        ? message
+        : Array.isArray(message)
+          ? Buffer.concat(message).toString()
+          : Buffer.isBuffer(message)
+            ? message.toString()
+            : Buffer.from(message).toString();
+      const data = JSON.parse(text);
 
       switch (data.type) {
         case 'join-lobby':
@@ -63,9 +83,6 @@ wss.on('connection', (ws) => {
         case 'leave-lobby':
           handleLeaveLobby(clientId);
           break;
-        
-        default:
-          if (process.env.NODE_ENV !== 'production') console.log('Unknown message type:', data.type);
       }
     } catch (error) {
       console.error('Error parsing message:', error);
@@ -73,7 +90,6 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    if (process.env.NODE_ENV !== 'production') console.log(`Client disconnected: ${clientId}`);
     handleLeaveLobby(clientId);
     clients.delete(clientId);
   });
@@ -106,8 +122,6 @@ function handleJoinLobby(clientId: string, lobbyId: string, role: 'host' | 'clie
       peerRole: role,
     }));
   });
-
-  if (process.env.NODE_ENV !== 'production') console.log(`Client ${clientId} joined lobby ${lobbyId} as ${role}`);
 }
 
 function handleSignal(fromClientId: string, data: { targetId?: string; signal: unknown }) {
@@ -151,10 +165,9 @@ function handleLeaveLobby(clientId: string) {
 }
 
 const PORT = process.env.PORT || 3001;
+const HOST = '0.0.0.0';
 
-server.listen(PORT, () => {
-  if (process.env.NODE_ENV !== 'production') {
-    console.log(`Server running on port ${PORT}`);
-    console.log(`WebSocket server ready`);
-  }
+server.listen(PORT, HOST, () => {
+  console.log(`🎮 Server listening on http://0.0.0.0:${PORT}`);
 });
+

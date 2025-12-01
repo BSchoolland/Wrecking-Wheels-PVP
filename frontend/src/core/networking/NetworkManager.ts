@@ -80,6 +80,11 @@ export class NetworkManager {
   private onEvent: (event: GameEvent) => void;
   private onConnected: () => void;
   private onDisconnected: () => void;
+  private pingIntervalId: number | null = null;
+  private estimatedOneWayMs: number = 0;
+  private bestRttMs: number = Number.POSITIVE_INFINITY;
+  private rttQueue: number[] = []; // New: Queue for recent RTTs
+  private readonly MAX_RTT_SAMPLES = 5; // Average last 5 for stability
 
   constructor(config: NetworkManagerConfig) {
     this.role = config.role;
@@ -110,7 +115,7 @@ export class NetworkManager {
     };
 
     this.signalingWs.onerror = (error) => {
-      console.error('Signaling WebSocket error:', error);
+      console.error(`[${this.role}] ✗ Signaling WebSocket error:`, error);
       this.connectionState = 'failed';
     };
 
@@ -187,15 +192,36 @@ export class NetworkManager {
           this.onUIUpdate(message.payload as unknown as UIState);
         } else if (message.type === 'event') {
           this.onEvent(message.payload as unknown as GameEvent);
+        } else if (message.type === 'ping') {
+          // Echo back immediately
+          this.peerConnection?.sendReliableInternal({ type: 'pong', payload: message.payload });
+          } else if (message.type === 'pong') {
+            const t0 = (message.payload as { t: number }).t;
+            if (typeof t0 === 'number') {
+              const rtt = performance.now() - t0;
+              this.rttQueue.push(rtt);
+            if (this.rttQueue.length > this.MAX_RTT_SAMPLES) {
+              this.rttQueue.shift();
+            }
+            const avgRtt = this.rttQueue.length > 0 ? this.rttQueue.reduce((a, b) => a + b, 0) / this.rttQueue.length : rtt;
+            const oneWay = avgRtt / 2;
+            this.estimatedOneWayMs = this.estimatedOneWayMs ? (this.estimatedOneWayMs * 0.5 + oneWay * 0.5) : oneWay; // Faster EMA
+          }
         }
       },
       onConnect: () => {
         this.connectionState = 'connected';
         this.onConnected();
+        // Start periodic pings over reliable channel
+        if (this.pingIntervalId) window.clearInterval(this.pingIntervalId);
+        this.pingIntervalId = window.setInterval(() => {
+          try { this.peerConnection?.sendReliableInternal({ type: 'ping', payload: { t: performance.now() } }); } catch { /* ignore send errors */ }
+        }, 1000);
       },
       onDisconnect: () => {
         this.connectionState = 'disconnected';
         this.onDisconnected();
+        if (this.pingIntervalId) { window.clearInterval(this.pingIntervalId); this.pingIntervalId = null; }
       },
     });
 
@@ -229,15 +255,34 @@ export class NetworkManager {
             this.onUIUpdate(message.payload as unknown as UIState);
           } else if (message.type === 'event') {
             this.onEvent(message.payload as unknown as GameEvent);
+          } else if (message.type === 'ping') {
+            this.peerConnection?.sendReliableInternal({ type: 'pong', payload: message.payload });
+          } else if (message.type === 'pong') {
+            const t0 = (message.payload as { t: number }).t;
+            if (typeof t0 === 'number') {
+              const rtt = performance.now() - t0;
+              this.rttQueue.push(rtt);
+              if (this.rttQueue.length > this.MAX_RTT_SAMPLES) {
+                this.rttQueue.shift();
+              }
+              const avgRtt = this.rttQueue.length > 0 ? this.rttQueue.reduce((a, b) => a + b, 0) / this.rttQueue.length : rtt;
+              const oneWay = avgRtt / 2;
+              this.estimatedOneWayMs = this.estimatedOneWayMs ? (this.estimatedOneWayMs * 0.5 + oneWay * 0.5) : oneWay; // Faster EMA
+            }
           }
         },
         onConnect: () => {
           this.connectionState = 'connected';
           this.onConnected();
+          if (this.pingIntervalId) window.clearInterval(this.pingIntervalId);
+          this.pingIntervalId = window.setInterval(() => {
+            try { this.peerConnection?.sendReliableInternal({ type: 'ping', payload: { t: performance.now() } }); } catch { /* ignore send errors */ }
+          }, 1000);
         },
         onDisconnect: () => {
           this.connectionState = 'disconnected';
           this.onDisconnected();
+          if (this.pingIntervalId) { window.clearInterval(this.pingIntervalId); this.pingIntervalId = null; }
         },
       });
 
@@ -281,7 +326,6 @@ export class NetworkManager {
    */
   sendState(state: unknown): void {
     if (this.role !== 'host') {
-      console.warn('Only host can send state');
       return;
     }
     this.peerConnection?.sendState(state as unknown as GameState);
@@ -299,7 +343,6 @@ export class NetworkManager {
    */
   sendUIUpdate(uiState: UIState): void {
     if (this.role !== 'host') {
-      console.warn('Only host can send UI updates');
       return;
     }
     this.peerConnection?.sendUIUpdate(uiState);
@@ -310,7 +353,6 @@ export class NetworkManager {
    */
   sendEvent(event: GameEvent): void {
     if (this.role !== 'host') {
-      console.warn('Only host can send events');
       return;
     }
     this.peerConnection?.sendEvent(event);
@@ -347,5 +389,8 @@ export class NetworkManager {
     try { this.peerConnection?.close(); } catch (e) { /* noop */ }
     this.peerConnection = null;
     this.connectionState = 'disconnected';
+    if (this.pingIntervalId) { window.clearInterval(this.pingIntervalId); this.pingIntervalId = null; }
   }
+
+  getEstimatedOneWayMs(): number { return this.estimatedOneWayMs || 0; }
 }

@@ -4,11 +4,13 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { NetworkedGame } from '@/game/NetworkedGame';
+import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
+import { Renderer } from '@/rendering/Renderer';
+import { WORLD_BOUNDS } from '@shared/constants/physics';
 import { ContraptionBuilder } from '@/ui/components/ContraptionBuilder';
-import { DeckBuilder } from '@/ui/components/DeckBuilder';
+import { ContraptionTester } from '@/ui/components/ContraptionTester';
 import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
-import { createBlock } from '@/game/contraptions';
-import type { BlockType } from '@/game/contraptions';
+import type { PlayerReadyCommand } from '@shared/types/Commands';
 import './App.css';
 
 const initializeDefaults = async () => {
@@ -31,17 +33,15 @@ const initializeDefaults = async () => {
     defaultData.contraptions.forEach((c: ContraptionSaveData) => {
       localStorage.setItem(`contraption-${c.id}`, JSON.stringify(c));
     });
-
-    // Save deck-1 with the ids (up to 6)
-    const ids = defaultData.contraptions.slice(0, 6).map((c: ContraptionSaveData) => c.id);
-    localStorage.setItem('deck-1', JSON.stringify(ids));
   } catch (error) {
     console.error('Failed to load default deck:', error);
   }
 };
 
-type View = 'menu' | 'lobby' | 'game' | 'builder' | 'deck';
+type View = 'menu' | 'lobby' | 'game' | 'builder' | 'test';
 type Role = 'host' | 'client';
+
+type QueueJoinResponse = { success: boolean; lobbyId: string; role: Role; status: 'waiting' | 'ready'; players?: string[] };
 
 function App() {
   const [view, setView] = useState<View>('menu');
@@ -49,135 +49,134 @@ function App() {
   const [lobbyId, setLobbyId] = useState('');
   const [playerId] = useState(`player-${Date.now()}`);
   const [selectedContraption, setSelectedContraption] = useState<ContraptionSaveData | null>(null);
-  const [selectedDeckSlot, setSelectedDeckSlot] = useState<1 | 2 | 3>(1);
-  const [deckQueue, setDeckQueue] = useState<ContraptionSaveData[]>([]); // remaining draw pile
-  const [hand, setHand] = useState<ContraptionSaveData[]>([]);
-  const [gameOver, setGameOver] = useState<string | null>(null);
-  const [energy, setEnergy] = useState(0);
-  
+  // Energy/health removed in arena mode
+  const [isWaiting, setIsWaiting] = useState(false);
+  const [contraptionToTest, setContraptionToTest] = useState<ContraptionSaveData | null>(null);
+  const [gameWinState, setGameWinState] = useState<'win' | 'loss' | null>(null);
+
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const bgCanvasRef = useRef<HTMLCanvasElement>(null);
   const gameRef = useRef<NetworkedGame | null>(null);
+  const bgRendererRef = useRef<Renderer | null>(null);
+  const bgPhysicsRef = useRef<PhysicsEngine | null>(null);
+  const bgAnimRef = useRef<number | null>(null);
   const selectedRef = useRef<ContraptionSaveData | null>(null);
+  const pollIntervalRef = useRef<number | null>(null);
 
-
-  const createLobby = () => {
-    const newLobbyId = `lobby-${Date.now()}`;
-    setLobbyId(newLobbyId);
-    setRole('host');
-    setView('lobby');
-  };
-
-  const joinLobby = () => {
-    const inputLobbyId = prompt('Enter lobby ID:');
-    if (inputLobbyId) {
-      setLobbyId(inputLobbyId);
-      setRole('client');
+  // Single Play action -> queue join
+  const play = async () => {
+    try {
+      setIsWaiting(true);
+      const res = await fetch('/api/matchmaking/queue/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId }),
+      });
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`HTTP ${res.status} ${res.statusText}${text ? `: ${text}` : ''}`);
+      }
+      const data = (await res.json()) as QueueJoinResponse;
+      if (!data.success) throw new Error('Failed to join queue');
+      setLobbyId(data.lobbyId);
+      setRole(data.role);
       setView('lobby');
+      if (data.status === 'waiting') {
+        startPollingForReady(data.lobbyId);
+      } else {
+        setIsWaiting(false);
+        // Lobby is already ready (both players matched), create NetworkedGame immediately
+        if (canvasRef.current && !gameRef.current) {
+          gameRef.current = new NetworkedGame({
+            canvas: canvasRef.current,
+            role: data.role,
+            lobbyId: data.lobbyId,
+            playerId,
+            contraption: selectedContraption || undefined,
+            onReturnToMenu: () => {
+              gameRef.current?.destroy();
+              gameRef.current = null;
+              setView('menu');
+            },
+          });
+          gameRef.current.start();
+        }
+      }
+    } catch (e) {
+      console.error('Queue join failed', e);
+      setIsWaiting(false);
+      alert('Failed to join matchmaking. Is the backend running on port 3001?');
     }
   };
 
-  const resolveContraptionById = (id: string): ContraptionSaveData | null => {
+  const startPollingForReady = (id: string) => {
+    if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
+    pollIntervalRef.current = window.setInterval(async () => {
+      try {
+        const res = await fetch(`/api/matchmaking/lobby/${id}`);
+        if (!res.ok) return;
+        const { lobby } = await res.json();
+        if (lobby?.status === 'ready') {
+          setIsWaiting(false);
+          // Create NetworkedGame instance when both players are matched (regardless of contraption selection)
+          if (!gameRef.current && canvasRef.current) {
+            gameRef.current = new NetworkedGame({
+              canvas: canvasRef.current,
+              role,
+              lobbyId: id,
+              playerId,
+              contraption: selectedContraption || undefined,
+              onReturnToMenu: () => {
+                gameRef.current?.destroy();
+                gameRef.current = null;
+                setView('menu');
+              },
+            });
+            gameRef.current.start();
+          }
+          if (pollIntervalRef.current) { window.clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
+        }
+      } catch {
+        void 0; // ignore transient errors
+      }
+    }, 1000);
+  };
+
+  const leaveQueueIfWaiting = async () => {
+    if (!isWaiting) return;
     try {
-      const raw = localStorage.getItem(`contraption-${id}`);
-      if (!raw) return null;
-      return JSON.parse(raw);
+      await fetch('/api/matchmaking/queue/leave', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ playerId }),
+      });
     } catch {
-      return null;
+      void 0; // ignore errors on best-effort leave
     }
-  };
-
-  const calculateCost = (contraption: ContraptionSaveData): { energy: number } => {
-    const totalEnergy = contraption.blocks.reduce((sum, b) => {
-      if (b.energyCost !== undefined) return sum + b.energyCost;
-      const block = createBlock(b.type as BlockType, 0, 0);
-      return sum + block.energyCost;
-    }, 0);
-    return {
-      energy: Math.ceil(Number(totalEnergy.toFixed(2))),
-    };
-  };
-
-  const calculatePlacementTime = (contraption: ContraptionSaveData): number => {
-    const blockCount = contraption.blocks.length;
-    return (500 + blockCount * 50) / 1000; // Convert to seconds
-  };
-
-  const renderContraptionPreview = (contraption: ContraptionSaveData): JSX.Element => {
-    if (!contraption.blocks || contraption.blocks.length === 0) {
-      return <div className="preview-empty">No blocks</div>;
-    }
-
-    const blocks = contraption.blocks;
-    const minX = Math.min(...blocks.map(b => b.gridX));
-    const maxX = Math.max(...blocks.map(b => b.gridX));
-    const minY = Math.min(...blocks.map(b => b.gridY));
-    const maxY = Math.max(...blocks.map(b => b.gridY));
-    
-    const width = maxX - minX + 1;
-    const height = maxY - minY + 1;
-    const cellSize = 12;
-
-    return (
-      <svg width={width * cellSize} height={height * cellSize} className="contraption-preview-svg">
-        {blocks.map((block, idx) => {
-          const x = (block.gridX - minX) * cellSize;
-          const y = (block.gridY - minY) * cellSize;
-          const colors: Record<string, string> = {
-            core: '#f39c12',
-            simple: '#2196f3',
-            gray: '#7f8c8d',
-            wheel: '#34495e',
-            spike: '#e74c3c',
-            tnt: '#e67e22',
-          };
-          const color = colors[block.type] || '#bdc3c7';
-          
-          return block.type === 'wheel' ? (
-            <circle key={idx} cx={x + cellSize/2} cy={y + cellSize/2} r={cellSize/2 - 1} fill={color} />
-          ) : (
-            <rect key={idx} x={x + 1} y={y + 1} width={cellSize - 2} height={cellSize - 2} fill={color} />
-          );
-        })}
-      </svg>
-    );
-  };
-
-  const loadDeckIds = (slot: 1 | 2 | 3): string[] => {
-    try {
-      const raw = localStorage.getItem(`deck-${slot}`);
-      const ids = raw ? JSON.parse(raw) : [];
-      return Array.isArray(ids) ? ids : [];
-    } catch {
-      return [];
-    }
-  };
-
-  const initDeckForGame = (slot: 1 | 2 | 3) => {
-    const ids = loadDeckIds(slot).slice(0, 6);
-    const contraptions: ContraptionSaveData[] = ids
-      .map(id => resolveContraptionById(id))
-      .filter(Boolean) as ContraptionSaveData[];
-    // If fewer than 6, allow starting but just use what exists
-    const initialQueue = contraptions.slice();
-    const initialHand = initialQueue.splice(0, 3);
-    setDeckQueue(initialQueue);
-    setHand(initialHand);
-    setSelectedContraption(initialHand[0] || null);
   };
 
   const startGame = () => {
-    initDeckForGame(selectedDeckSlot);
+    // Send player-ready command when Ready button is clicked
+    if (gameRef.current && selectedContraption) {
+      const readyCmd: PlayerReadyCommand = {
+        type: 'player-ready',
+        playerId,
+        contraption: selectedContraption,
+      };
+      gameRef.current.sendReadyCommand(readyCmd);
+    }
     setView('game');
   };
 
   const stopGame = () => {
-    setGameOver(null);
     if (gameRef.current) {
       gameRef.current.destroy();
       gameRef.current = null;
     }
     setView('menu');
     setLobbyId('');
+    setIsWaiting(false);
+    if (pollIntervalRef.current) { window.clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
   };
 
   useEffect(() => {
@@ -188,63 +187,51 @@ function App() {
     selectedRef.current = selectedContraption;
   }, [selectedContraption]);
 
+  // Create NetworkedGame when lobby is ready (regardless of contraption selection)
+  useEffect(() => {
+    if (view === 'lobby' && lobbyId && !isWaiting && canvasRef.current && !gameRef.current) {
+      gameRef.current = new NetworkedGame({
+        canvas: canvasRef.current,
+        role,
+        lobbyId,
+        playerId,
+        contraption: selectedContraption || undefined,
+      });
+      gameRef.current.start();
+    }
+  }, [view, lobbyId, isWaiting, role, playerId]);
+  
+  // Update contraption when selected (if NetworkedGame already exists)
+  useEffect(() => {
+    if (gameRef.current && selectedContraption) {
+      gameRef.current.setSelectedContraption(selectedContraption);
+    }
+  }, [selectedContraption]);
+
   useEffect(() => {
     if (view === 'game' && canvasRef.current && lobbyId && selectedContraption) {
-      // Create networked game instance only once per game start
-      if (!gameRef.current) {
+      // Game view: NetworkedGame should already be created in lobby
+      // Just ensure it's started if it wasn't already
+      if (gameRef.current) {
+        // Update selected contraption if changed
+        gameRef.current.setSelectedContraption(selectedContraption);
+      } else {
+        // Fallback: create if somehow not created in lobby
         gameRef.current = new NetworkedGame({
           canvas: canvasRef.current,
           role,
           lobbyId,
           playerId,
           contraption: selectedContraption,
-          onContraptionSpawned: () => {
-            setHand(prev => {
-              const selected = selectedRef.current;
-              if (!selected) return prev;
-              const idx = prev.findIndex(c => c.id === selected.id);
-              if (idx === -1) return prev;
-              const newHand = prev.slice();
-              const [played] = newHand.splice(idx, 1);
-              let drawn: ContraptionSaveData | undefined;
-              setDeckQueue(q => {
-                if (q.length === 0) return q;
-                drawn = q[0];
-                const rest = q.slice(1);
-                if (played) rest.push(played);
-                if (drawn) newHand.push(drawn);
-                setSelectedContraption(newHand[0] || null);
-                return rest;
-              });
-              return newHand;
-            });
-          },
-          onGameOver: (winner: 'host' | 'client') => {
-            const isWin = winner === role;
-            const message = isWin ? "You win!" : "You Lose :(";
-            setGameOver(message);
-            gameRef.current?.stop();
-            setTimeout(() => {
-              setGameOver(null);
-              stopGame();
-            }, 3000);
+          onReturnToMenu: () => {
+            gameRef.current?.destroy();
+            gameRef.current = null;
+            setView('menu');
           },
         });
-
         gameRef.current.start();
-      } else {
-        // Just update the selected contraption when switching cards
-        gameRef.current.setSelectedContraption(selectedContraption);
       }
-
-      // Poll energy for UI display
-      const energyInterval = setInterval(() => {
-        const currentEnergy = gameRef.current?.getMyEnergy() ?? 0;
-        setEnergy(currentEnergy);
-      }, 100);
-
       return () => {
-        clearInterval(energyInterval);
         if (view !== 'game' && gameRef.current) {
           gameRef.current.destroy();
           gameRef.current = null;
@@ -253,156 +240,167 @@ function App() {
     }
   }, [view, role, lobbyId, playerId, selectedContraption]);
 
+  // Background physics + render loop for non-game views
+  useEffect(() => {
+    if (view !== 'game' && bgCanvasRef.current) {
+      // Initialize once per entry into non-game view
+      if (!bgRendererRef.current) {
+        bgRendererRef.current = new Renderer(bgCanvasRef.current);
+        bgRendererRef.current.camera.setControlsEnabled(false);
+        bgRendererRef.current.camera.y = WORLD_BOUNDS.HEIGHT * 0.3;
+        bgRendererRef.current.camera.setZoom(bgRendererRef.current.camera.zoom * 1.25);
+      }
+      if (!bgPhysicsRef.current) {
+        bgPhysicsRef.current = new PhysicsEngine();
+        bgPhysicsRef.current.start();
+      }
+      const loop = () => {
+        if (bgRendererRef.current && bgPhysicsRef.current) {
+          bgRendererRef.current.renderPhysics(bgPhysicsRef.current.getAllBodies());
+        }
+        bgAnimRef.current = requestAnimationFrame(loop);
+      };
+      if (!bgAnimRef.current) bgAnimRef.current = requestAnimationFrame(loop);
+      return () => {
+        if (bgAnimRef.current) { cancelAnimationFrame(bgAnimRef.current); bgAnimRef.current = null; }
+      };
+    } else {
+      // Tear down when entering game view
+      if (bgAnimRef.current) { cancelAnimationFrame(bgAnimRef.current); bgAnimRef.current = null; }
+      bgRendererRef.current?.destroy();
+      bgRendererRef.current = null;
+      bgPhysicsRef.current?.destroy();
+      bgPhysicsRef.current = null;
+    }
+  }, [view]);
+
+  useEffect(() => {
+    return () => {
+      if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
+      void leaveQueueIfWaiting();
+    };
+  }, []);
+
+  // Poll for game win state
+  useEffect(() => {
+    if (view === 'game' && gameRef.current) {
+      const interval = setInterval(() => {
+        const winState = gameRef.current?.getWinState();
+        if (winState) {
+          setGameWinState(winState.winner === playerId ? 'win' : 'loss');
+        }
+      }, 100);
+      return () => clearInterval(interval);
+    }
+  }, [view, playerId]);
+
   return (
     <div className="app">
-      <h1>Wrecking Wheels PVP</h1>
-      
-      {view === 'menu' && (
-        <div className="menu">
-          <button onClick={createLobby}>Create Lobby (Host)</button>
-          <button onClick={joinLobby}>Join Lobby (Client)</button>
-          <button onClick={() => setView('deck')}>Deck Builder</button>
-          <button onClick={() => setView('builder')}>Contraption Builder</button>
+      {(view !== 'game' && view !== 'lobby') && (
+        <canvas
+          ref={bgCanvasRef}
+          className="bg-canvas"
+        />
+      )}
+      {(view === 'lobby' || view === 'game') && (
+        <canvas
+          ref={canvasRef}
+          style={{ display: view === 'lobby' ? 'none' : 'block' }}
+        />
+      )}
+      {view === 'game' && gameWinState && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 10,
+          pointerEvents: 'none'
+        }}>
+          <button
+            className="btn btn-primary"
+            onClick={() => {
+              gameRef.current?.destroy();
+              gameRef.current = null;
+              setGameWinState(null);
+              setView('menu');
+            }}
+            style={{ pointerEvents: 'auto', marginTop: '80px' }}
+          >
+            Return to Menu
+          </button>
         </div>
       )}
-
-      {view === 'deck' && (
-        <DeckBuilder onBack={() => setView('menu')} />
-      )}
-
-      {view === 'builder' && (
-        <ContraptionBuilder onBack={() => setView('menu')} />
-      )}
-
-      {view === 'lobby' && (
-        <div className="lobby">
-          <h2>Lobby: {lobbyId}</h2>
-          <p>Role: <strong>{role === 'host' ? 'Host' : 'Client'}</strong></p>
-          <p className="info">
-            {role === 'host' 
-              ? 'Share this lobby ID with another player. They can join in a new tab/window.'
-              : 'Connecting to host...'}
-          </p>
-          
-          <div className="contraption-selection">
-            <h3>Select Deck Slot</h3>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-              <button onClick={() => setSelectedDeckSlot(1)} disabled={selectedDeckSlot === 1}>Deck 1</button>
-              <button onClick={() => setSelectedDeckSlot(2)} disabled={selectedDeckSlot === 2}>Deck 2</button>
-              <button onClick={() => setSelectedDeckSlot(3)} disabled={selectedDeckSlot === 3}>Deck 3</button>
+      {view !== 'game' && (
+        <div className="overlay">
+          <h1 className="title">Wrecking Wheels PVP</h1>
+          {view === 'menu' && (
+            <div className="menu">
+              <button className="btn btn-primary" onClick={play} disabled={isWaiting}>Play</button>
+              <button className="btn btn-secondary" onClick={() => setView('builder')}>Contraption Builder</button>
             </div>
-            <div>
-              <h4>Preview</h4>
-              <div className="contraption-list">
-                {(() => {
-                  try {
-                    const raw = localStorage.getItem(`deck-${selectedDeckSlot}`) || '[]';
-                    const ids = JSON.parse(raw);
-                    const items = Array.isArray(ids) ? ids : [];
-                    if (items.length === 0) return <p className="no-contraptions">Empty deck. Build one in Deck Builder.</p>;
-                    return items.slice(0, 6).map((id: string) => {
-                      const dataRaw = localStorage.getItem(`contraption-${id}`);
-                      if (!dataRaw) return null;
-                      try {
-                        const data = JSON.parse(dataRaw);
-                        return (
-                          <div key={id} className="contraption-item">
-                            <div className="contraption-name">{data.name}</div>
-                            <div className="contraption-info">{data.blocks?.length || 0} blocks</div>
-                          </div>
-                        );
-                      } catch { return null; }
-                    });
-                  } catch { return null; }
-                })()}
+          )}
+
+          {view === 'builder' && (
+            <ContraptionBuilder onBack={() => setView('menu')} onTestStart={(data) => { setContraptionToTest(data); setView('test'); }} />
+          )}
+
+          {view === 'test' && contraptionToTest && (
+            <ContraptionTester contraption={contraptionToTest} onBack={() => setView('builder')} />
+          )}
+
+          {view === 'lobby' && (
+            <div className="lobby">
+              <p className="info">
+                {isWaiting ? 'Waiting for another player to join…' : 'Matched!  Waiting for both players to be ready...'}
+              </p>
+
+              <div className="contraption-selection">
+                <h3>Select Your Contraption</h3>
+                <div className="contraption-list">
+                  {(() => {
+                    const items: ContraptionSaveData[] = [];
+                    for (let i = 0; i < localStorage.length; i++) {
+                      const key = localStorage.key(i);
+                      if (!key || !key.startsWith('contraption-')) continue;
+                      const raw = localStorage.getItem(key);
+                      if (!raw) continue;
+                      try { items.push(JSON.parse(raw)); } catch { /* ignore parse errors */ }
+                    }
+                    if (items.length === 0) return <p className="no-contraptions">No saved contraptions. Create one in the builder.</p>;
+                    return items.map((data) => (
+                      <div 
+                        key={data.id} 
+                        className={`contraption-item ${selectedContraption?.id === data.id ? 'selected' : ''}`}
+                        onClick={() => setSelectedContraption(data)}
+                      >
+                        <div className="contraption-name">{data.name}</div>
+                        <div className="contraption-info">{data.blocks?.length || 0} blocks{data.vehicleClass ? ` • ${data.vehicleClass}` : ''}</div>
+                      </div>
+                    ));
+                  })()}
+                </div>
+              </div>
+
+              <div className="lobby-actions">
+                <button className="btn btn-primary" onClick={startGame} disabled={!selectedContraption || isWaiting}>Ready</button>
+                <button className="btn btn-secondary" onClick={() => { setView('menu'); setLobbyId(''); setIsWaiting(false); if (pollIntervalRef.current) { window.clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; } void leaveQueueIfWaiting(); }}>
+                  Back to Menu
+                </button>
               </div>
             </div>
-          </div>
-          
-          <div className="lobby-actions">
-            <button onClick={startGame}>Start Game</button>
-            <button onClick={() => { setView('menu'); setLobbyId(''); }}>
-              Back to Menu
-            </button>
-          </div>
+          )}
         </div>
       )}
 
       {view === 'game' && (
         <div className="game-container" style={{ position: 'relative' }}>
           <canvas ref={canvasRef}></canvas>
-          {gameOver && (
-            <div 
-              style={{
-                position: 'absolute',
-                top: 0,
-                left: 0,
-                width: '100%',
-                height: '100%',
-                backgroundColor: 'rgba(0, 0, 0, 0.7)',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'center',
-                alignItems: 'center',
-                color: 'white',
-                fontSize: '2em',
-                zIndex: 10
-              }}
-            >
-              <h2>{gameOver}</h2>
-              <p>Returning to menu in 3 seconds...</p>
-            </div>
-          )}
-          <div className="game-hud">
-            <div className="hud-info">
-              <span>Lobby: {lobbyId}</span>
-              <span>Role: {role}</span>
-              <span>Left Click: Spawn contraption</span>
-              <span>Right/Middle Click + Drag: Pan camera</span>
-              <span>Mouse Wheel: Zoom in/out</span>
-            </div>
-            <div className="energy-display">
-              <span style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>⚡ {energy.toFixed(1)}/20</span>
-            </div>
-          </div>
-          <div className="contraption-cards-container">
-            <div className="contraption-cards">
-              {hand.map((c) => {
-                const cost = calculateCost(c);
-                const placementTime = calculatePlacementTime(c);
-                const isSelected = selectedContraption?.id === c.id;
-                const canAfford = energy >= cost.energy;
-                
-                return (
-                  <div 
-                    key={c.id} 
-                    className={`contraption-card ${isSelected ? 'selected' : ''} ${!canAfford ? 'unaffordable' : ''}`}
-                    onClick={() => {
-                      setSelectedContraption(c);
-                      gameRef.current?.setSelectedContraption(c);
-                    }}
-                  >
-                    <div className="card-name">{c?.name || 'Empty'}</div>
-                    <div className="card-preview">
-                      {renderContraptionPreview(c)}
-                    </div>
-                    <div className="card-costs">
-                      <span className={`cost-item ${energy < cost.energy ? 'insufficient' : ''}`}>
-                        ⚡ {cost.energy}
-                      </span>
-                      <span className="cost-item">
-                        ⏱️ {placementTime.toFixed(1)}s
-                      </span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="deck-counter">Deck: {deckQueue.length}</div>
-            <button className="back-button" onClick={stopGame}>
-              Leave Game
-            </button>
-          </div>
+          <button className="back-button" onClick={stopGame} style={{ position: 'absolute', bottom: 12, right: 12 }}>
+            Leave Game
+          </button>
         </div>
       )}
     </div>

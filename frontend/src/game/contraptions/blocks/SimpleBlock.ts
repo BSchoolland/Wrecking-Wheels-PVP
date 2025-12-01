@@ -5,17 +5,41 @@
 import Matter from 'matter-js';
 import { BaseBlock, AttachmentDirection, PhysicsSpawnResult } from './BaseBlock';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
+import { PHYSICS_CONSTANTS } from '@shared/constants/physics';
 
 export class SimpleBlock extends BaseBlock {
   constructor(id: string, gridX: number, gridY: number) {
     super(id, 'simple', gridX, gridY, 100);
     this.energyCost = 0.2;
   }
+
+  getSpritesheetName(): string | undefined {
+    return 'blocks';
+  }
+
+  getSpriteRow(): number {
+    return 0;
+  }
   
   getAttachmentFaces(): AttachmentDirection[] {
     return ['top', 'right', 'bottom', 'left'];
   }
   
+  static getBodySpecs() {
+    return {
+      0: {
+        shape: 'rectangle' as const,
+        width: BUILDER_CONSTANTS.BLOCK_SIZE,
+        height: BUILDER_CONSTANTS.BLOCK_SIZE,
+        options: {
+          label: 'simple',
+          density: PHYSICS_CONSTANTS.BLOCK_DENSITY / 3,
+          render: { fillStyle: '#2196f3', strokeStyle: '#000', lineWidth: 2 }
+        }
+      }
+    };
+  }
+
   createPhysicsBodies(worldX: number, worldY: number, _direction?: number): PhysicsSpawnResult {
     const body = Matter.Bodies.rectangle(
       worldX,
@@ -24,6 +48,7 @@ export class SimpleBlock extends BaseBlock {
       BUILDER_CONSTANTS.BLOCK_SIZE,
       { 
         label: this.id,
+        density: PHYSICS_CONSTANTS.BLOCK_DENSITY / 3,
         render: { fillStyle: '#2196f3', strokeStyle: '#000', lineWidth: 2 }
       }
     );

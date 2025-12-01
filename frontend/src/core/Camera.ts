@@ -36,6 +36,7 @@ export class Camera {
   private onMouseLeave?: (e: MouseEvent) => void;
   private onContextMenu?: (e: MouseEvent) => void;
   private onWheel?: (e: WheelEvent) => void;
+  private controlsAttached = false;
 
   constructor(config: CameraConfig) {
     this.canvas = config.canvas;
@@ -45,7 +46,7 @@ export class Camera {
     // Start centered with zoom that fits the world
     this.x = this.worldWidth / 2;
     this.y = this.worldHeight / 2;
-    this.zoom = this.calculateFitZoom();
+    this.setZoom(this.calculateFitZoom() * 2);
 
     this.setupControls();
   }
@@ -63,6 +64,7 @@ export class Camera {
    * Set up camera controls (panning with mouse drag)
    */
   private setupControls(): void {
+    if (this.controlsAttached) return;
     // Mouse down - start dragging
     this.onMouseDown = (e: MouseEvent) => {
       // Only pan with right click or middle click to avoid interfering with game clicks
@@ -117,9 +119,38 @@ export class Camera {
     this.onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
-      this.zoom = Math.max(0.1, Math.min(3, this.zoom * zoomFactor));
+      this.setZoom(this.zoom * zoomFactor);
     };
     this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
+    this.controlsAttached = true;
+  }
+
+  private detachControls(): void {
+    if (!this.controlsAttached) return;
+    if (this.onMouseDown) this.canvas.removeEventListener('mousedown', this.onMouseDown);
+    if (this.onMouseMove) this.canvas.removeEventListener('mousemove', this.onMouseMove);
+    if (this.onMouseUp) this.canvas.removeEventListener('mouseup', this.onMouseUp);
+    if (this.onMouseLeave) this.canvas.removeEventListener('mouseleave', this.onMouseLeave);
+    if (this.onContextMenu) this.canvas.removeEventListener('contextmenu', this.onContextMenu);
+    if (this.onWheel) this.canvas.removeEventListener('wheel', this.onWheel as EventListener);
+    this.controlsAttached = false;
+    this.isDragging = false;
+    this.canvas.style.cursor = 'default';
+  }
+
+  public setControlsEnabled(enabled: boolean): void {
+    if (enabled) {
+      this.setupControls();
+    } else {
+      this.detachControls();
+    }
+  }
+
+  /**
+   * Set zoom to an absolute value (not multiplied)
+   */
+  public setZoom(value: number): void {
+    this.zoom = Math.max(0.1, Math.min(3, value));
   }
 
   /**
@@ -167,26 +198,21 @@ export class Camera {
   resetView(): void {
     this.x = this.worldWidth / 2;
     this.y = this.worldHeight / 2;
-    this.zoom = this.calculateFitZoom();
+    this.setZoom(this.calculateFitZoom());
   }
 
   /**
    * Update camera on window resize
    */
   onResize(): void {
-    this.zoom = this.calculateFitZoom();
+    // Camera transform is relative to canvas dimensions, no need to recalculate zoom
   }
 
   /**
    * Clean up event listeners
    */
   destroy(): void {
-    if (this.onMouseDown) this.canvas.removeEventListener('mousedown', this.onMouseDown);
-    if (this.onMouseMove) this.canvas.removeEventListener('mousemove', this.onMouseMove);
-    if (this.onMouseUp) this.canvas.removeEventListener('mouseup', this.onMouseUp);
-    if (this.onMouseLeave) this.canvas.removeEventListener('mouseleave', this.onMouseLeave);
-    if (this.onContextMenu) this.canvas.removeEventListener('contextmenu', this.onContextMenu);
-    if (this.onWheel) this.canvas.removeEventListener('wheel', this.onWheel as EventListener);
+    this.detachControls();
   }
 }
 

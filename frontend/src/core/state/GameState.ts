@@ -109,26 +109,6 @@ export class GameStateManager {
   }
 
   /**
-   * Check if game is over
-   */
-  checkWinCondition(): string | null {
-    // TODO: Implement win condition logic
-    // For now, just check if match duration exceeded
-    if (this.state.matchDuration >= GAME_CONSTANTS.MATCH_DURATION) {
-      // Determine winner based on some metric
-      return Object.keys(this.state.players)[0]; // Placeholder
-    }
-    return null;
-  }
-
-  /**
-   * Set the winner
-   */
-  setWinner(playerId: string): void {
-    this.state.winner = playerId;
-  }
-
-  /**
    * Serialize state for network transmission
    */
   serialize(): GameState {

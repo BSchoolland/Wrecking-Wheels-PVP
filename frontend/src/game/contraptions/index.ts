@@ -3,110 +3,68 @@
  */
 
 export { BaseBlock } from './blocks/BaseBlock';
-export type { BlockType, BlockData, AttachmentDirection, PhysicsSpawnResult } from './blocks/BaseBlock';
-export { CoreBlock } from './blocks/CoreBlock';
-export { SimpleBlock } from './blocks/SimpleBlock';
-export { WheelBlock } from './blocks/WheelBlock';
-export { SpikeBlock } from './blocks/SpikeBlock';
-export { GrayBlock } from './blocks/GrayBlock';
-export { TNTBlock } from './blocks/TNTBlock';
-export { Contraption } from './Contraption';
+export type { BlockData, AttachmentDirection, PhysicsSpawnResult, BodySpec } from './blocks/BaseBlock';
+
+export { Contraption, setContraptionDebug, CONTRAPTION_DEBUG, setContraptionStaticDebug, CONTRAPTION_STATIC_DEBUG } from './Contraption';
 export type { ContraptionSaveData } from './Contraption';
 
 // Helper to create a block by type
-import { BaseBlock, BlockType } from './blocks/BaseBlock';
+import { BaseBlock } from './blocks/BaseBlock';
 import { CoreBlock } from './blocks/CoreBlock';
 import { SimpleBlock } from './blocks/SimpleBlock';
 import { WheelBlock } from './blocks/WheelBlock';
 import { SpikeBlock } from './blocks/SpikeBlock';
 import { GrayBlock } from './blocks/GrayBlock';
 import { TNTBlock } from './blocks/TNTBlock';
+import { RocketBlock } from './blocks/RocketBlock';
+import { HingeBlock } from './blocks/Hinge';
+
+// Registry mapping type -> constructor; `BlockType` derives from keys
+const BLOCK_REGISTRY = {
+  core: CoreBlock,
+  simple: SimpleBlock,
+  wheel: WheelBlock,
+  spike: SpikeBlock,
+  gray: GrayBlock,
+  tnt: TNTBlock,
+  rocket: RocketBlock,
+  hinge: HingeBlock,
+} as const;
+
+export type BlockType = keyof typeof BLOCK_REGISTRY;
+
+export { BLOCK_REGISTRY };
+
+// UI/Hotkey metadata for builder palette
+export const BLOCK_METADATA: Readonly<Record<BlockType, { label: string; key: string }>> = {
+  core: { label: 'Core', key: '1' },
+  simple: { label: 'Simple', key: '2' },
+  wheel: { label: 'Wheel', key: '3' },
+  spike: { label: 'Spike', key: '4' },
+  gray: { label: 'Gray', key: '5' },
+  tnt: { label: 'TNT', key: '6' },
+  rocket: { label: 'Rocket', key: '7' },
+  hinge: { label: 'Hinge', key: '8' },
+} as const;
+
+// Ordered palette for consistent display
+export const BLOCKS_ORDER: Readonly<BlockType[]> = [
+  'core', 'simple', 'wheel', 'spike', 'gray', 'tnt', 'rocket', 'hinge'
+] as const;
 
 export function createBlock(type: BlockType, gridX: number, gridY: number): BaseBlock {
   const id = `${type}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  
-  switch (type) {
-    case 'core':
-      return new CoreBlock(id, gridX, gridY);
-    case 'simple':
-      return new SimpleBlock(id, gridX, gridY);
-    case 'wheel':
-      return new WheelBlock(id, gridX, gridY);
-    case 'spike':
-      return new SpikeBlock(id, gridX, gridY);
-    case 'gray':
-      return new GrayBlock(id, gridX, gridY);
-    case 'tnt':
-      return new TNTBlock(id, gridX, gridY);
-    default:
-      throw new Error(`Unknown block type: ${type}`);
-  }
+
+  const Ctor = BLOCK_REGISTRY[type];
+  return new Ctor(id, gridX, gridY);
 }
 
 // Helper to reconstruct a block from saved data
 import type { BlockData } from './blocks/BaseBlock';
 
 export function blockFromData(data: BlockData): BaseBlock {
-  switch (data.type) {
-    case 'core': {
-      const core = new CoreBlock(data.id, data.gridX, data.gridY);
-      core.maxHealth = data.maxHealth ?? 100;
-      core.health = data.health;
-      core.stiffness = data.stiffness;
-      if (data.damage !== undefined) core.damage = data.damage;
-      if (data.knockback !== undefined) core.knockback = data.knockback;
-      core.fragile = data.fragile ?? false;
-      return core;
-    }
-    case 'simple': {
-      const simple = new SimpleBlock(data.id, data.gridX, data.gridY);
-      simple.maxHealth = data.maxHealth ?? 100;
-      simple.health = data.health;
-      simple.stiffness = data.stiffness;
-      if (data.damage !== undefined) simple.damage = data.damage;
-      if (data.knockback !== undefined) simple.knockback = data.knockback;
-      simple.fragile = data.fragile ?? false;
-      return simple;
-    }
-    case 'wheel': {
-      const wheel = new WheelBlock(data.id, data.gridX, data.gridY);
-      wheel.health = data.health;
-      wheel.stiffness = data.stiffness;
-      if (data.damage !== undefined) wheel.damage = data.damage;
-      if (data.knockback !== undefined) wheel.knockback = data.knockback;
-      wheel.fragile = data.fragile ?? false;
-      return wheel;
-    }
-    case 'spike': {
-      const spike = new SpikeBlock(data.id, data.gridX, data.gridY);
-      spike.maxHealth = data.maxHealth ?? 1000;
-      spike.health = data.health;
-      spike.stiffness = data.stiffness;
-      if (data.damage !== undefined) spike.damage = data.damage;
-      if (data.knockback !== undefined) spike.knockback = data.knockback;
-      spike.fragile = data.fragile ?? false;
-      return spike;
-    }
-    case 'gray': {
-      const gray = new GrayBlock(data.id, data.gridX, data.gridY);
-      gray.health = data.health;
-      gray.stiffness = data.stiffness;
-      if (data.damage !== undefined) gray.damage = data.damage;
-      if (data.knockback !== undefined) gray.knockback = data.knockback;
-      gray.fragile = data.fragile ?? false;
-      return gray;
-    }
-    case 'tnt': {
-      const tnt = new TNTBlock(data.id, data.gridX, data.gridY);
-      tnt.maxHealth = data.maxHealth ?? 25;
-      tnt.health = data.health;
-      tnt.stiffness = data.stiffness;
-      if (data.damage !== undefined) tnt.damage = data.damage;
-      if (data.knockback !== undefined) tnt.knockback = data.knockback;
-      tnt.fragile = data.fragile ?? false;
-      return tnt;
-    }
-    default:
-      throw new Error(`Unknown block type: ${data.type}`);
-  }
+  const block = createBlock(data.type as BlockType, data.gridX, data.gridY);
+  // Don't overwrite the unique ID from createBlock - keep it to avoid collisions between contraptions
+  block.loadFromData(data);
+  return block;
 }

@@ -1,11 +1,12 @@
 /**
  * Physics Engine - Wrapper around Matter.js
- * Runs ONLY on the host machine
+ * Runs on the host (authoritative) and optionally on clients for prediction/replay
  */
 
 import Matter from 'matter-js';
 import { PHYSICS_CONSTANTS, WORLD_BOUNDS } from '@shared/constants/physics';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
+import { GAME_CONSTANTS } from '@shared/constants/game';
 import type { PhysicsBodyState, Vector2D } from '@shared/types/GameState';
 import { createMapBoundaries } from '@/game/terrain/MapLoader';
 import type { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
@@ -16,21 +17,32 @@ interface ContraptionLike {
   checkConnectivity?: () => void;
 }
 
+interface PhysicsEngineOptions {
+  createBoundaries?: boolean;
+}
+
 export class PhysicsEngine {
   private engine: Matter.Engine;
   private world: Matter.World;
   private runner: Matter.Runner | null = null;
+  private eventsInitialized = false;
   private bodiesToRemove: Set<Matter.Body> = new Set();
   private constraintsToRemove: Set<Matter.Constraint> = new Set();
   private pendingForces: Map<number, { x: number, y: number }> = new Map();
   private contraptions: Map<string, ContraptionLike> = new Map();
+  private wheelInput: Map<string, number> = new Map();
   private effects: EffectManager | null = null;
   private activeCollisions: Map<string, number> = new Map(); // Track collision start times
-  private gameOver = false;
-  private baseHost?: (Matter.Body & { baseHp?: number; ownerId?: string });
-  private baseClient?: (Matter.Body & { baseHp?: number; ownerId?: string });
+  private botPlayers: Set<string> = new Set();
+  private rocketHold: Map<string, boolean> = new Map();
+  
+  // Map shrinking
+  private groundBodies: Matter.Body[] = [];
+  private mapShrinkStartTime: number | null = null;
+  private lastBlockDestroyTime: number | null = null;
 
-  constructor() {
+  constructor(options: PhysicsEngineOptions = {}) {
+    const { createBoundaries = true } = options;
     // Create Matter.js engine
     this.engine = Matter.Engine.create({
       gravity: { x: 0, y: PHYSICS_CONSTANTS.GRAVITY, scale: 0.001 },
@@ -38,7 +50,9 @@ export class PhysicsEngine {
     this.world = this.engine.world;
 
     // Create world boundaries
-    this.createBoundaries();
+    if (createBoundaries) {
+      this.createBoundaries();
+    }
     
     // Set up collision detection
     this.setupCollisionHandling();
@@ -46,65 +60,9 @@ export class PhysicsEngine {
 
   private createBoundaries(): void {
     const boundaries = createMapBoundaries();
+    // Store ground bodies separately for map shrinking
+    this.groundBodies = boundaries.filter(b => b.label === 'ground');
     Matter.World.add(this.world, boundaries);
-
-    // Create team bases as non-collidable translucent sensors with HP
-    const BASE_SIZE = BUILDER_CONSTANTS.GRID_SIZE * 3;
-    const BASE_HEIGHT = BASE_SIZE * 3;
-    const BASE_OFFSET_RATIO = 0.15; // 15% into the map
-    const leftBaseX = WORLD_BOUNDS.WIDTH * BASE_OFFSET_RATIO;
-    const rightBaseX = WORLD_BOUNDS.WIDTH * (1 - BASE_OFFSET_RATIO);
-    const groundY = WORLD_BOUNDS.HEIGHT + 25; // from MapLoader, ground center
-    const baseY = groundY - 60 - BASE_SIZE; // slightly above ground, adjusted for taller height
-
-    this.baseHost = Matter.Bodies.rectangle(leftBaseX, baseY, BASE_SIZE, BASE_HEIGHT, {
-      isStatic: true,
-      isSensor: true,
-      label: 'base-host',
-      render: { fillStyle: 'rgba(52,152,219,0.35)' } as unknown as Matter.IBodyRenderOptions,
-    }) as Matter.Body & { baseHp?: number; ownerId?: string };
-    this.baseHost.baseHp = 10;
-
-    this.baseClient = Matter.Bodies.rectangle(rightBaseX, baseY, BASE_SIZE, BASE_HEIGHT, {
-      isStatic: true,
-      isSensor: true,
-      label: 'base-client',
-      render: { fillStyle: 'rgba(231,76,60,0.35)' } as unknown as Matter.IBodyRenderOptions,
-    }) as Matter.Body & { baseHp?: number; ownerId?: string };
-    this.baseClient.baseHp = 10;
-
-    const handleBaseCollision = (baseBody: Matter.Body & { baseHp?: number; ownerId?: string }, other: Matter.Body) => {
-      if (this.gameOver) return;
-      const otherBlock = (other as unknown as { block?: { type?: string; health?: number } }).block;
-      const otherOwner = (other as unknown as { ownerId?: string }).ownerId;
-      if (!otherBlock || otherBlock.type !== 'core') return;
-      // Ignore same owner if known
-      if (otherOwner && baseBody.ownerId && otherOwner === baseBody.ownerId) return;
-      // Kill the core
-      if (typeof otherBlock.health === 'number') {
-        otherBlock.health = 0;
-      }
-      // Decrement base HP once per contact event
-      if (typeof baseBody.baseHp === 'number' && baseBody.baseHp > 0) {
-        baseBody.baseHp -= 1;
-        if (baseBody.baseHp <= 0) {
-          this.gameOver = true;
-          const bodies = Matter.Composite.allBodies(this.world);
-          bodies.forEach(b => {
-            const bOwner = (b as unknown as { ownerId?: string }).ownerId;
-            const block = (b as unknown as { block?: { health?: number } }).block;
-            if (block && typeof block.health === 'number' && bOwner && baseBody.ownerId && bOwner === baseBody.ownerId) {
-              block.health = 0;
-            }
-          });
-        }
-      }
-    };
-
-    (this.baseHost as unknown as { onCollision?: (my: Matter.Body, other: Matter.Body) => void }).onCollision = (my, other) => handleBaseCollision(this.baseHost!, other);
-    (this.baseClient as unknown as { onCollision?: (my: Matter.Body, other: Matter.Body) => void }).onCollision = (my, other) => handleBaseCollision(this.baseClient!, other);
-
-    Matter.World.add(this.world, [this.baseHost, this.baseClient]);
   }
 
   private setupCollisionHandling(): void {
@@ -161,16 +119,68 @@ export class PhysicsEngine {
     return idA < idB ? `${idA}-${idB}` : `${idB}-${idA}`;
   }
 
+  /**
+   * Update map shrinking - progressively destroy ground blocks from both edges
+   */
+  private updateMapShrinking(): void {
+    // Only proceed if map shrinking has been explicitly enabled
+    if (this.mapShrinkStartTime === null) {
+      return;
+    }
+
+    const now = Date.now();
+    const elapsed = now - this.mapShrinkStartTime;
+    
+    // Check if shrinking should have started
+    if (elapsed < GAME_CONSTANTS.MAP_SHRINK_START_MS) {
+      return; // Not time to start yet
+    }
+
+    // Get remaining bodies still in the world
+    const remainingBodies = this.groundBodies.filter(b => this.world.bodies.includes(b));
+    
+    if (remainingBodies.length === 0) {
+      return; // All blocks already destroyed
+    }
+
+    // Initialize last destroy time on first shrink
+    if (this.lastBlockDestroyTime === null) {
+      this.lastBlockDestroyTime = now;
+    }
+
+    // Check if enough time has passed to destroy the next block
+    if (now - this.lastBlockDestroyTime >= GAME_CONSTANTS.MAP_SHRINK_DESTROY_INTERVAL_MS) {
+      // Sort by distance from center
+      const centerX = WORLD_BOUNDS.WIDTH / 2;
+      const sortedByDistance = remainingBodies
+        .map(body => ({ body, distFromCenter: Math.abs(body.position.x - centerX) }))
+        .sort((a, b) => b.distFromCenter - a.distFromCenter); // Farthest first (edges)
+
+      // Define decay zone: farthest X% of blocks can randomly decay
+      const decayZoneSize = Math.max(1, Math.ceil(sortedByDistance.length * 0.05));
+      const decayZone = sortedByDistance.slice(0, decayZoneSize);
+
+      // Randomly pick one from the decay zone
+      const randomIndex = Math.floor(Math.random() * decayZone.length);
+      this.bodiesToRemove.add(decayZone[randomIndex].body);
+      this.lastBlockDestroyTime = now;
+    }
+  }
+
   private cleanupDeadBlocks(): void {
     const allBodies = Matter.Composite.allBodies(this.world);
     const allConstraints = Matter.Composite.allConstraints(this.world);
     const affectedContraptions = new Set<string>();
     const explodedBlocks = new Set<string>();
+    const deadBlockIds = new Set<string>();
     
     // Find blocks with 0 health
     allBodies.forEach(body => {
       const block = (body as unknown as { block?: BaseBlock }).block;
       if (block && block.health <= 0) {
+        // Track the whole block so we can remove all sibling bodies (e.g., wheels)
+        const blockId = (body as unknown as { blockId?: string }).blockId;
+        if (blockId) deadBlockIds.add(blockId);
         // Trigger TNT explosion once per block
         if ((block as unknown as { type?: string }).type === 'tnt' && !explodedBlocks.has(block.id)) {
           explodedBlocks.add(block.id);
@@ -210,7 +220,7 @@ export class PhysicsEngine {
               const force = { x: nx * knock, y: ny * knock };
               if (physics) {
                 physics.queueForce(targetBody, force);
-              } else {
+              } else if (!targetBody.isStatic) {
                 Matter.Body.applyForce(targetBody, targetBody.position, force);
               }
 
@@ -239,7 +249,30 @@ export class PhysicsEngine {
           this.effects.createGhostBlock(body, block);
         }
       }
+      // Destroy core blocks that fall off the map
+      else if (block && (block as unknown as { type?: string }).type === 'core' && body.position.y > WORLD_BOUNDS.HEIGHT + 500) {
+        block.health = 0;
+        const blockId = (body as unknown as { blockId?: string }).blockId;
+        if (blockId) deadBlockIds.add(blockId);
+        this.bodiesToRemove.add(body);
+        const contraptionId = (body as unknown as { contraptionId?: string }).contraptionId;
+        if (contraptionId) affectedContraptions.add(contraptionId);
+        
+        if (this.effects) {
+          this.effects.createGhostBlock(body, block);
+        }
+      }
     });
+
+    // Also remove any sibling bodies that belong to dead blocks (matched by blockId)
+    if (deadBlockIds.size > 0) {
+      allBodies.forEach(body => {
+        const bid = (body as unknown as { blockId?: string }).blockId;
+        if (bid && deadBlockIds.has(bid)) {
+          this.bodiesToRemove.add(body);
+        }
+      });
+    }
     
     // Remove constraints connected to dead bodies
     allConstraints.forEach(constraint => {
@@ -274,32 +307,52 @@ export class PhysicsEngine {
    * Start the physics simulation with fixed timestep
    */
   start(): void {
+    if (!this.eventsInitialized) {
+      this.eventsInitialized = true;
+      // Invoke optional per-body tick hooks so blocks can own their logic
+      Matter.Events.on(this.engine, 'beforeUpdate', () => {
+        const bodies = Matter.Composite.allBodies(this.world);
+        for (const body of bodies) {
+          const anyBody = body as unknown as { onTick?: () => void };
+          if (typeof anyBody.onTick === 'function') anyBody.onTick();
+
+          // Apply simple torque to wheel bodies based on per-player input
+          const ownerId = (body as unknown as { ownerId?: string }).ownerId;
+          if (ownerId && body.label?.endsWith('-wheel')) {
+            let input = this.wheelInput.get(ownerId) || 0;
+            if (!this.wheelInput.has(ownerId) && this.botPlayers.has(ownerId)) input = 1; // bots drive forward by default
+            (body as unknown as { currentWheelInput?: number }).currentWheelInput = input;
+          }
+          // Apply rocket hold state: thrust only while held
+          if (ownerId && body.label?.endsWith('-rocket')) {
+            const hold = this.rocketHold.get(ownerId) || false;
+            (body as unknown as { rocketThrusting?: boolean }).rocketThrusting = hold;
+            // Expose sprite column for rendering (0 = idle, 1 = active)
+            (body as unknown as { spriteCol?: number }).spriteCol = hold ? 1 : 0;
+          }
+        }
+
+        // Flush queued forces (apply at body center for stability)
+        if (this.pendingForces.size > 0) {
+          this.pendingForces.forEach((force, bodyId) => {
+            const target = bodies.find(b => b.id === bodyId);
+            if (target && !target.isStatic) {
+              Matter.Body.applyForce(target, target.position, force);
+            }
+          });
+          this.pendingForces.clear();
+        }
+      });
+      // Clean up dead blocks after physics update
+      Matter.Events.on(this.engine, 'afterUpdate', () => {
+        this.cleanupDeadBlocks();
+        this.updateMapShrinking();
+      });
+    }
+
     this.runner = Matter.Runner.create({
       delta: PHYSICS_CONSTANTS.FIXED_TIMESTEP,
       isFixed: true,
-    });
-    // Invoke optional per-body tick hooks so blocks can own their logic
-    Matter.Events.on(this.engine, 'beforeUpdate', () => {
-      const bodies = Matter.Composite.allBodies(this.world);
-      for (const body of bodies) {
-        const anyBody = body as unknown as { onTick?: () => void };
-        if (typeof anyBody.onTick === 'function') anyBody.onTick();
-      }
-
-      // Flush queued forces (apply at body center for stability)
-      if (this.pendingForces.size > 0) {
-        this.pendingForces.forEach((force, bodyId) => {
-          const target = bodies.find(b => b.id === bodyId);
-          if (target) {
-            Matter.Body.applyForce(target, target.position, force);
-          }
-        });
-        this.pendingForces.clear();
-      }
-    });
-    // Clean up dead blocks after physics update
-    Matter.Events.on(this.engine, 'afterUpdate', () => {
-      this.cleanupDeadBlocks();
     });
     Matter.Runner.run(this.runner, this.engine);
   }
@@ -354,6 +407,13 @@ export class PhysicsEngine {
   }
 
   /**
+   * Remove a constraint from the physics world
+   */
+  removeConstraint(constraint: Matter.Constraint): void {
+    Matter.World.remove(this.world, constraint);
+  }
+
+  /**
    * Remove a body from the physics world
    */
   removeBody(body: Matter.Body): void {
@@ -363,14 +423,14 @@ export class PhysicsEngine {
   /**
    * Create a simple box body (for testing/contraptions)
    */
-  createBox(x: number, y: number, width: number, height: number, options?: Matter.IBodyDefinition): Matter.Body {
+  createBox(x: number, y: number, width: number, height: number, options?: Partial<Matter.IBodyDefinition>): Matter.Body {
     return Matter.Bodies.rectangle(x, y, width, height, options);
   }
 
   /**
    * Create a circle body (for wheels)
    */
-  createCircle(x: number, y: number, radius: number, options?: Matter.IBodyDefinition): Matter.Body {
+  createCircle(x: number, y: number, radius: number, options?: Partial<Matter.IBodyDefinition>): Matter.Body {
     return Matter.Bodies.circle(x, y, radius, options);
   }
 
@@ -397,15 +457,19 @@ export class PhysicsEngine {
    * Apply a force to a body
    */
   applyForce(body: Matter.Body, force: Vector2D): void {
-    Matter.Body.applyForce(body, body.position, force);
+    if (!body.isStatic) {
+      Matter.Body.applyForce(body, body.position, force);
+    }
   }
 
   /**
    * Queue a force to be applied on the next physics tick
    */
   queueForce(body: Matter.Body, force: Vector2D): void {
-    const existing = this.pendingForces.get(body.id) || { x: 0, y: 0 };
-    this.pendingForces.set(body.id, { x: existing.x + force.x, y: existing.y + force.y });
+    if (!body.isStatic) {
+      const existing = this.pendingForces.get(body.id) || { x: 0, y: 0 };
+      this.pendingForces.set(body.id, { x: existing.x + force.x, y: existing.y + force.y });
+    }
   }
 
   /**
@@ -413,6 +477,20 @@ export class PhysicsEngine {
    */
   getAllBodies(): Matter.Body[] {
     return Matter.Composite.allBodies(this.world);
+  }
+
+  /**
+   * Enable map shrinking (call when match starts in PVP mode)
+   */
+  enableMapShrinking(): void {
+    this.mapShrinkStartTime = Date.now();
+  }
+
+  /**
+   * Get all constraints in the world
+   */
+  getAllConstraints(): Matter.Constraint[] {
+    return Matter.Composite.allConstraints(this.world);
   }
 
   /**
@@ -432,19 +510,18 @@ export class PhysicsEngine {
     Matter.Engine.clear(this.engine);
   }
 
-  isGameOver(): boolean {
-    return this.gameOver;
+  public setWheelInput(playerId: string, value: number): void {
+    const v = Math.max(-1, Math.min(1, value));
+    if (v === 0) this.wheelInput.delete(playerId); else this.wheelInput.set(playerId, v);
   }
 
-  setBaseOwner(side: 'host' | 'client', ownerId: string): void {
-    if (side === 'host' && this.baseHost) (this.baseHost as unknown as { ownerId?: string }).ownerId = ownerId;
-    if (side === 'client' && this.baseClient) (this.baseClient as unknown as { ownerId?: string }).ownerId = ownerId;
+  // Hinge input is handled entirely within HingeBlock; no physics hook needed
+
+  public setBot(playerId: string, isBot: boolean): void {
+    if (isBot) this.botPlayers.add(playerId); else this.botPlayers.delete(playerId);
   }
 
-  public getBaseHp(side: 'host' | 'client'): number {
-    if (side === 'host') {
-      return this.baseHost?.baseHp ?? 10;
-    }
-    return this.baseClient?.baseHp ?? 10;
+  public setRocketHold(playerId: string, value: boolean): void {
+    if (value) this.rocketHold.set(playerId, true); else this.rocketHold.delete(playerId);
   }
 }

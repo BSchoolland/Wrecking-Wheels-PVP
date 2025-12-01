@@ -17,13 +17,17 @@ export interface ContraptionData {
   }>;
   direction?: number;
   team?: string;
+  isBot?: boolean;
+  vehicleClass?: 'light' | 'medium' | 'heavy';
 }
 
 export type GameCommand = 
   | DeployCommand
   | ReadyCommand
   | SpawnBoxCommand
-  | PlayerInitCommand;
+  | PlayerInitCommand
+  | BlockInputCommand
+  | PlayerReadyCommand;
 
 export interface DeployCommand {
   type: 'deploy';
@@ -48,6 +52,21 @@ export interface SpawnBoxCommand {
 export interface PlayerInitCommand {
   type: 'player-init';
   playerId: string;
+  contraption?: ContraptionData;
+}
+
+export interface BlockInputCommand {
+  type: 'block-input';
+  playerId: string;
+  bindingId: string; // e.g. 'rocket-hold', 'wheel-forward', 'wheel-reverse'
+  phase: 'press' | 'release' | 'change';
+  payload?: { [key: string]: unknown };
+}
+
+export interface PlayerReadyCommand {
+  type: 'player-ready';
+  playerId: string;
+  contraption?: ContraptionData;
 }
 
 /**
@@ -62,14 +81,15 @@ export interface UIState {
  * Game Event (host -> client, one-off, reliable)
  */
 export type GameEvent = 
-  | { type: 'game-over'; winner: 'host' | 'client' }
-  | { type: 'player-joined'; playerId: string };
+  | { type: 'player-joined'; playerId: string }
+  | { type: 'countdown-start' }
+  | { type: 'game-over'; winner: string; loser: string };
 
 /**
  * Network message wrapper
  */
 export interface NetworkMessage<T = unknown> {
-  type: 'command' | 'state' | 'ui-update' | 'event';
+  type: 'command' | 'state' | 'ui-update' | 'event' | 'ping' | 'pong';
   payload: T;
   sequence?: number; // for message ordering
 }

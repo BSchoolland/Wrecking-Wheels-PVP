@@ -5,6 +5,7 @@
 import Matter from 'matter-js';
 import { BaseBlock, AttachmentDirection, PhysicsSpawnResult } from './BaseBlock';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
+import { PHYSICS_CONSTANTS } from '@shared/constants/physics';
 
 export class SpikeBlock extends BaseBlock {
   static readonly BODY_OFFSET = -5; // Shift to align attachment face with grid
@@ -17,6 +18,13 @@ export class SpikeBlock extends BaseBlock {
     this.energyCost = 0.5;
   }
 
+  getSpritesheetName(): string | undefined {
+    return 'blocks';
+  }
+
+  getSpriteRow(): number {
+    return 3;
+  }
   
   getAttachmentFaces(): AttachmentDirection[] {
     return ['left'];
@@ -35,6 +43,26 @@ export class SpikeBlock extends BaseBlock {
     return super.getAttachmentPoints(face, facingDirection);
   }
   
+  static getBodySpecs() {
+    const size = BUILDER_CONSTANTS.BLOCK_SIZE;
+    const halfSize = size / 2;
+    return {
+      0: {
+        shape: 'polygon' as const,
+        vertices: [
+          { x: -halfSize, y: -halfSize },  // left-top
+          { x: -halfSize, y: halfSize },   // left-bottom
+          { x: halfSize, y: 0 }             // tip
+        ],
+        options: {
+          label: 'spike',
+          density: PHYSICS_CONSTANTS.BLOCK_DENSITY,
+          render: { fillStyle: '#e91e63', strokeStyle: '#000', lineWidth: 2 }
+        }
+      }
+    };
+  }
+  
   // Uses BaseBlock.onCollision with stronger defaults
   
   createPhysicsBodies(worldX: number, worldY: number, direction?: number): PhysicsSpawnResult {
@@ -42,8 +70,10 @@ export class SpikeBlock extends BaseBlock {
     const halfSize = size / 2;
     const dir = direction ?? 1;
     
-    // Shift slightly left so attachment aligns more with block face
+    // Adjust offset based on rotation to align the attachment face after rotation
+
     const baseX = worldX + SpikeBlock.BODY_OFFSET * dir;
+    const baseY = worldY;
     
     // Local triangle (attachment face on the left when dir=1, mirrored when dir=-1)
     const local = [
@@ -51,14 +81,15 @@ export class SpikeBlock extends BaseBlock {
       { x: -halfSize, y: halfSize },  // left-bottom
       { x: halfSize, y: 0 },          // tip (right when dir=1, left when dir=-1)
     ];
-    const vertices = local.map(p => ({ x: baseX + p.x * dir, y: worldY + p.y }));
+    const vertices = local.map(p => ({ x: baseX + p.x * dir, y: baseY + p.y }));
     
     const body = Matter.Bodies.fromVertices(
       baseX,
-      worldY,
+      baseY,
       [vertices],
       { 
         label: this.id,
+        density: PHYSICS_CONSTANTS.BLOCK_DENSITY,
         render: { fillStyle: '#e91e63', strokeStyle: '#000', lineWidth: 2 }
       }
     );

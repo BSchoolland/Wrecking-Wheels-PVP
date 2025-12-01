@@ -38,10 +38,10 @@ export class PeerConnection {
   async initialize(iceServers?: RTCIceServer[]): Promise<void> {
     this.connection = new RTCPeerConnection({
       iceServers: iceServers || [
-        { urls: 'stun:stun.l.google.com:19302' } // Free STUN server
+        { urls: 'stun:stun.l.google.com:19302' },
       ],
+      iceCandidatePoolSize: 10,
     });
-
     this.setupConnectionHandlers();
   }
 
@@ -58,15 +58,21 @@ export class PeerConnection {
     if (!this.connection) return;
 
     this.connection.onicecandidate = (event) => {
-      if (event.candidate && this.iceCandidateHandler) {
-        this.iceCandidateHandler(event.candidate);
+      if (event.candidate) {
+        if (this.iceCandidateHandler) {
+          this.iceCandidateHandler(event.candidate);
+        }
       }
+    };
+
+    this.connection.oniceconnectionstatechange = () => {
+    };
+
+    this.connection.onicegatheringstatechange = () => {
     };
 
     this.connection.onconnectionstatechange = () => {
       const state = this.connection?.connectionState;
-      if (import.meta.env.DEV) console.log('Connection state:', state);
-      
       if (state === 'disconnected' || state === 'failed' || state === 'closed') {
         this.onDisconnect();
       }
@@ -116,11 +122,9 @@ export class PeerConnection {
     if (!this.dataChannel) return;
 
     this.dataChannel.onopen = () => {
-      if (import.meta.env.DEV) console.log('Physics data channel opened');
     };
 
     this.dataChannel.onclose = () => {
-      if (import.meta.env.DEV) console.log('Physics data channel closed');
     };
 
     this.dataChannel.onmessage = (event) => {
@@ -137,12 +141,10 @@ export class PeerConnection {
     if (!this.reliableChannel) return;
 
     this.reliableChannel.onopen = () => {
-      if (import.meta.env.DEV) console.log('Reliable data channel opened');
       this.onConnect();
     };
 
     this.reliableChannel.onclose = () => {
-      if (import.meta.env.DEV) console.log('Reliable data channel closed');
     };
 
     this.reliableChannel.onmessage = (event) => {
@@ -160,7 +162,11 @@ export class PeerConnection {
    */
   sendState(state: GameState): void {
     if (this.role !== 'host') {
-      console.warn('Only host can send state');
+      return;
+    }
+
+    // Check if send queue has room before attempting to send
+    if (!this.canSendOnPhysicsChannel()) {
       return;
     }
 
@@ -172,11 +178,26 @@ export class PeerConnection {
   }
 
   /**
+   * Check if the physics data channel is ready and has room in its send queue
+   */
+  private canSendOnPhysicsChannel(): boolean {
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+      return false;
+    }
+    // RTCDataChannel.bufferedAmount shows bytes pending transmission
+    // If > 64KB, the queue is backed up; skip this frame to let it drain
+    const bufferedAmount = this.dataChannel.bufferedAmount || 0;
+    const canSend = bufferedAmount < 65536;
+    
+    
+    return canSend;
+  }
+
+  /**
    * Send command (client -> host or host -> host for local commands)
    */
   sendCommand(command: GameCommand): void {
     if (!this.reliableChannel || this.reliableChannel.readyState !== 'open') {
-      console.warn('Reliable channel not ready for command');
       return;
     }
     this.sendReliable({
@@ -191,7 +212,6 @@ export class PeerConnection {
    */
   sendUIUpdate(uiState: UIState): void {
     if (this.role !== 'host') {
-      console.warn('Only host can send UI updates');
       return;
     }
 
@@ -207,7 +227,6 @@ export class PeerConnection {
    */
   sendEvent(event: GameEvent): void {
     if (this.role !== 'host') {
-      console.warn('Only host can send events');
       return;
     }
 
@@ -223,7 +242,6 @@ export class PeerConnection {
    */
   private send(message: NetworkMessage): void {
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-      console.warn('Physics data channel not ready');
       return;
     }
 
@@ -239,7 +257,6 @@ export class PeerConnection {
    */
   private sendReliable(message: NetworkMessage): void {
     if (!this.reliableChannel || this.reliableChannel.readyState !== 'open') {
-      console.warn('Reliable data channel not ready');
       return;
     }
 
@@ -248,6 +265,13 @@ export class PeerConnection {
     } catch (error) {
       console.error('Failed to send reliable message:', error);
     }
+  }
+
+  /**
+   * Send message via reliable channel (internal utility)
+   */
+  public sendReliableInternal(message: NetworkMessage): void {
+    this.sendReliable(message);
   }
 
   /**
