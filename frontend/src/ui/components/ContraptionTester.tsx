@@ -1,11 +1,11 @@
 import { useEffect, useRef } from 'react';
-import { Contraption, blockFromData } from '@/game/contraptions';
-import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
-import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
+import { Contraption, blockFromData } from '@shared/contraptions';
+import type { ContraptionSaveData } from '@shared/contraptions/Contraption';
+import { PhysicsEngine } from '@shared/physics/PhysicsEngine';
 import { InputController } from '@/game/input/InputSystem';
 import { Renderer } from '@/rendering/Renderer';
 import { SpriteManager } from '@/rendering/SpriteManager';
-import { getTestSpawnPosition } from '@/game/terrain/MapLoader';
+import { getTestSpawnPosition } from '@shared/terrain/MapLoader';
 import './ContraptionTester.css';
 
 interface ContraptionTesterProps {

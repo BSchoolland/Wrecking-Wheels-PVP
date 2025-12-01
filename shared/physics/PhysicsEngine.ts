@@ -1,6 +1,6 @@
 /**
  * Physics Engine - Wrapper around Matter.js
- * Runs on the host (authoritative) and optionally on clients for prediction/replay
+ * Runs on the server (authoritative) and on clients for prediction
  */
 
 import Matter from 'matter-js';
@@ -8,9 +8,25 @@ import { PHYSICS_CONSTANTS, WORLD_BOUNDS } from '@shared/constants/physics';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 import { GAME_CONSTANTS } from '@shared/constants/game';
 import type { PhysicsBodyState, Vector2D } from '@shared/types/GameState';
-import { createMapBoundaries } from '@/game/terrain/MapLoader';
-import type { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
-import type { EffectManager } from '@/rendering/EffectManager';
+import { createMapBoundaries } from '@shared/terrain/MapLoader';
+
+// Optional effects interface - only used on client
+interface EffectsInterface {
+  spawnImpactParticles?: (x: number, y: number, damage: number, vx: number, vy: number) => void;
+  spawnDamageNumber?: (x: number, y: number, damage: number) => void;
+  applyBlockTint?: (id: number, damage: number) => void;
+  spawnExplosionFlash?: (x: number, y: number, radius: number, durationMs?: number) => void;
+  createGhostBlock?: (body: Matter.Body, block: unknown) => void;
+}
+
+// Block interface for type-safe access
+interface BaseBlockLike {
+  id: string;
+  type?: string;
+  health: number;
+  maxHealth: number;
+  applyResistance?: (amount: number, type: string) => number;
+}
 
 interface ContraptionLike {
   id: string;
@@ -25,14 +41,15 @@ export class PhysicsEngine {
   private engine: Matter.Engine;
   private world: Matter.World;
   private runner: Matter.Runner | null = null;
+  private serverIntervalId: ReturnType<typeof setInterval> | null = null;
   private eventsInitialized = false;
   private bodiesToRemove: Set<Matter.Body> = new Set();
   private constraintsToRemove: Set<Matter.Constraint> = new Set();
   private pendingForces: Map<number, { x: number, y: number }> = new Map();
   private contraptions: Map<string, ContraptionLike> = new Map();
   private wheelInput: Map<string, number> = new Map();
-  private effects: EffectManager | null = null;
-  private activeCollisions: Map<string, number> = new Map(); // Track collision start times
+  private effects: EffectsInterface | null = null;
+  private activeCollisions: Map<string, number> = new Map();
   private botPlayers: Set<string> = new Set();
   private rocketHold: Map<string, boolean> = new Map();
   
@@ -43,24 +60,20 @@ export class PhysicsEngine {
 
   constructor(options: PhysicsEngineOptions = {}) {
     const { createBoundaries = true } = options;
-    // Create Matter.js engine
     this.engine = Matter.Engine.create({
       gravity: { x: 0, y: PHYSICS_CONSTANTS.GRAVITY, scale: 0.001 },
     });
     this.world = this.engine.world;
 
-    // Create world boundaries
     if (createBoundaries) {
       this.createBoundaries();
     }
     
-    // Set up collision detection
     this.setupCollisionHandling();
   }
 
   private createBoundaries(): void {
     const boundaries = createMapBoundaries();
-    // Store ground bodies separately for map shrinking
     this.groundBodies = boundaries.filter(b => b.label === 'ground');
     Matter.World.add(this.world, boundaries);
   }
@@ -71,11 +84,9 @@ export class PhysicsEngine {
         const bodyA = pair.bodyA;
         const bodyB = pair.bodyB;
         
-        // Track collision start time
         const key = this.getCollisionKey(bodyA.id, bodyB.id);
         this.activeCollisions.set(key, Date.now());
         
-        // Call onCollision callback if body has one
         const onCollisionA = (bodyA as unknown as { onCollision?: (myBody: Matter.Body, otherBody: Matter.Body) => void }).onCollision;
         const onCollisionB = (bodyB as unknown as { onCollision?: (myBody: Matter.Body, otherBody: Matter.Body) => void }).onCollision;
         
@@ -97,7 +108,6 @@ export class PhysicsEngine {
         const key = this.getCollisionKey(pair.bodyA.id, pair.bodyB.id);
         const startTime = this.activeCollisions.get(key);
         
-        // If collision has been active for > 250ms, re-trigger damage
         if (startTime && now - startTime > 250) {
           const bodyA = pair.bodyA;
           const bodyB = pair.bodyB;
@@ -108,7 +118,6 @@ export class PhysicsEngine {
           if (onCollisionA) onCollisionA(bodyA, bodyB);
           if (onCollisionB) onCollisionB(bodyB, bodyA);
           
-          // Reset timer for next check
           this.activeCollisions.set(key, now);
         }
       });
@@ -119,11 +128,7 @@ export class PhysicsEngine {
     return idA < idB ? `${idA}-${idB}` : `${idB}-${idA}`;
   }
 
-  /**
-   * Update map shrinking - progressively destroy ground blocks from both edges
-   */
   private updateMapShrinking(): void {
-    // Only proceed if map shrinking has been explicitly enabled
     if (this.mapShrinkStartTime === null) {
       return;
     }
@@ -131,36 +136,29 @@ export class PhysicsEngine {
     const now = Date.now();
     const elapsed = now - this.mapShrinkStartTime;
     
-    // Check if shrinking should have started
     if (elapsed < GAME_CONSTANTS.MAP_SHRINK_START_MS) {
-      return; // Not time to start yet
+      return;
     }
 
-    // Get remaining bodies still in the world
     const remainingBodies = this.groundBodies.filter(b => this.world.bodies.includes(b));
     
     if (remainingBodies.length === 0) {
-      return; // All blocks already destroyed
+      return;
     }
 
-    // Initialize last destroy time on first shrink
     if (this.lastBlockDestroyTime === null) {
       this.lastBlockDestroyTime = now;
     }
 
-    // Check if enough time has passed to destroy the next block
     if (now - this.lastBlockDestroyTime >= GAME_CONSTANTS.MAP_SHRINK_DESTROY_INTERVAL_MS) {
-      // Sort by distance from center
       const centerX = WORLD_BOUNDS.WIDTH / 2;
       const sortedByDistance = remainingBodies
         .map(body => ({ body, distFromCenter: Math.abs(body.position.x - centerX) }))
-        .sort((a, b) => b.distFromCenter - a.distFromCenter); // Farthest first (edges)
+        .sort((a, b) => b.distFromCenter - a.distFromCenter);
 
-      // Define decay zone: farthest X% of blocks can randomly decay
       const decayZoneSize = Math.max(1, Math.ceil(sortedByDistance.length * 0.05));
       const decayZone = sortedByDistance.slice(0, decayZoneSize);
 
-      // Randomly pick one from the decay zone
       const randomIndex = Math.floor(Math.random() * decayZone.length);
       this.bodiesToRemove.add(decayZone[randomIndex].body);
       this.lastBlockDestroyTime = now;
@@ -174,27 +172,24 @@ export class PhysicsEngine {
     const explodedBlocks = new Set<string>();
     const deadBlockIds = new Set<string>();
     
-    // Find blocks with 0 health
     allBodies.forEach(body => {
-      const block = (body as unknown as { block?: BaseBlock }).block;
+      const block = (body as unknown as { block?: BaseBlockLike }).block;
       if (block && block.health <= 0) {
-        // Track the whole block so we can remove all sibling bodies (e.g., wheels)
         const blockId = (body as unknown as { blockId?: string }).blockId;
         if (blockId) deadBlockIds.add(blockId);
-        // Trigger TNT explosion once per block
-        if ((block as unknown as { type?: string }).type === 'tnt' && !explodedBlocks.has(block.id)) {
+        if (block.type === 'tnt' && !explodedBlocks.has(block.id)) {
           explodedBlocks.add(block.id);
           const center = body.position;
           const BLAST_RADIUS = BUILDER_CONSTANTS.GRID_SIZE * 5;
           const INNER_RADIUS = BLAST_RADIUS / 2;
           const DAMAGE_OUTER = 50;
           const DAMAGE_INNER = 150;
-          const KNOCKBACK_OUTER = 0.06; // strong push
-          const KNOCKBACK_INNER = 0.14; // even stronger push
+          const KNOCKBACK_OUTER = 0.06;
+          const KNOCKBACK_INNER = 0.14;
 
           allBodies.forEach(targetBody => {
             if (targetBody === body) return;
-            const targetBlock = (targetBody as unknown as { block?: BaseBlock }).block;
+            const targetBlock = (targetBody as unknown as { block?: BaseBlockLike }).block;
             if (!targetBlock || targetBlock.health <= 0) return;
 
             const dx = targetBody.position.x - center.x;
@@ -207,16 +202,14 @@ export class PhysicsEngine {
               const damage = isInner ? DAMAGE_INNER : DAMAGE_OUTER;
               const knock = isInner ? KNOCKBACK_INNER : KNOCKBACK_OUTER;
 
-              // Apply damage ignoring team/contraption, but allow resistance
               let finalDamage = damage;
               if (typeof targetBlock.applyResistance === 'function') {
                 finalDamage = targetBlock.applyResistance(damage, 'blast');
               }
               targetBlock.health -= finalDamage;
 
-              // Wake and apply radial impulse
               Matter.Sleeping.set(targetBody, false);
-              const physics = (targetBody as unknown as { physics?: { queueForce: (b: Matter.Body, f: Matter.Vector) => void } }).physics;
+              const physics = (targetBody as unknown as { physics?: PhysicsEngine }).physics;
               const force = { x: nx * knock, y: ny * knock };
               if (physics) {
                 physics.queueForce(targetBody, force);
@@ -224,19 +217,15 @@ export class PhysicsEngine {
                 Matter.Body.applyForce(targetBody, targetBody.position, force);
               }
 
-              // Effect feedback
-              const effects = (body as unknown as { effects?: EffectManager }).effects;
-              if (effects) {
-                effects.spawnImpactParticles(center.x, center.y, finalDamage, nx * knock, ny * knock);
-                effects.spawnDamageNumber(targetBody.position.x, targetBody.position.y - 15, finalDamage);
+              if (this.effects) {
+                this.effects.spawnImpactParticles?.(center.x, center.y, finalDamage, nx * knock, ny * knock);
+                this.effects.spawnDamageNumber?.(targetBody.position.x, targetBody.position.y - 15, finalDamage);
               }
             }
           });
 
-          // Single explosion flash at center (200ms)
-          const effects = (body as unknown as { effects?: EffectManager }).effects;
-          if (effects) {
-            effects.spawnExplosionFlash(center.x, center.y, BLAST_RADIUS, 200);
+          if (this.effects) {
+            this.effects.spawnExplosionFlash?.(center.x, center.y, BLAST_RADIUS, 200);
           }
         }
 
@@ -244,13 +233,11 @@ export class PhysicsEngine {
         const contraptionId = (body as unknown as { contraptionId?: string }).contraptionId;
         if (contraptionId) affectedContraptions.add(contraptionId);
         
-        // Spawn ghost block effect
         if (this.effects) {
-          this.effects.createGhostBlock(body, block);
+          this.effects.createGhostBlock?.(body, block);
         }
       }
-      // Destroy core blocks that fall off the map
-      else if (block && (block as unknown as { type?: string }).type === 'core' && body.position.y > WORLD_BOUNDS.HEIGHT + 500) {
+      else if (block && block.type === 'core' && body.position.y > WORLD_BOUNDS.HEIGHT + 500) {
         block.health = 0;
         const blockId = (body as unknown as { blockId?: string }).blockId;
         if (blockId) deadBlockIds.add(blockId);
@@ -259,12 +246,11 @@ export class PhysicsEngine {
         if (contraptionId) affectedContraptions.add(contraptionId);
         
         if (this.effects) {
-          this.effects.createGhostBlock(body, block);
+          this.effects.createGhostBlock?.(body, block);
         }
       }
     });
 
-    // Also remove any sibling bodies that belong to dead blocks (matched by blockId)
     if (deadBlockIds.size > 0) {
       allBodies.forEach(body => {
         const bid = (body as unknown as { blockId?: string }).blockId;
@@ -274,7 +260,6 @@ export class PhysicsEngine {
       });
     }
     
-    // Remove constraints connected to dead bodies
     allConstraints.forEach(constraint => {
       if (constraint.bodyA && this.bodiesToRemove.has(constraint.bodyA)) {
         this.constraintsToRemove.add(constraint);
@@ -284,7 +269,6 @@ export class PhysicsEngine {
       }
     });
     
-    // Remove from world
     if (this.bodiesToRemove.size > 0) {
       Matter.World.remove(this.world, Array.from(this.bodiesToRemove));
       this.bodiesToRemove.clear();
@@ -294,7 +278,6 @@ export class PhysicsEngine {
       this.constraintsToRemove.clear();
     }
     
-    // Check connectivity for affected contraptions
     affectedContraptions.forEach(id => {
       const contraption = this.contraptions.get(id);
       if (contraption?.checkConnectivity) {
@@ -303,36 +286,28 @@ export class PhysicsEngine {
     });
   }
 
-  /**
-   * Start the physics simulation with fixed timestep
-   */
   start(): void {
     if (!this.eventsInitialized) {
       this.eventsInitialized = true;
-      // Invoke optional per-body tick hooks so blocks can own their logic
       Matter.Events.on(this.engine, 'beforeUpdate', () => {
         const bodies = Matter.Composite.allBodies(this.world);
         for (const body of bodies) {
           const anyBody = body as unknown as { onTick?: () => void };
           if (typeof anyBody.onTick === 'function') anyBody.onTick();
 
-          // Apply simple torque to wheel bodies based on per-player input
           const ownerId = (body as unknown as { ownerId?: string }).ownerId;
           if (ownerId && body.label?.endsWith('-wheel')) {
             let input = this.wheelInput.get(ownerId) || 0;
-            if (!this.wheelInput.has(ownerId) && this.botPlayers.has(ownerId)) input = 1; // bots drive forward by default
+            if (!this.wheelInput.has(ownerId) && this.botPlayers.has(ownerId)) input = 1;
             (body as unknown as { currentWheelInput?: number }).currentWheelInput = input;
           }
-          // Apply rocket hold state: thrust only while held
           if (ownerId && body.label?.endsWith('-rocket')) {
             const hold = this.rocketHold.get(ownerId) || false;
             (body as unknown as { rocketThrusting?: boolean }).rocketThrusting = hold;
-            // Expose sprite column for rendering (0 = idle, 1 = active)
             (body as unknown as { spriteCol?: number }).spriteCol = hold ? 1 : 0;
           }
         }
 
-        // Flush queued forces (apply at body center for stability)
         if (this.pendingForces.size > 0) {
           this.pendingForces.forEach((force, bodyId) => {
             const target = bodies.find(b => b.id === bodyId);
@@ -343,107 +318,84 @@ export class PhysicsEngine {
           this.pendingForces.clear();
         }
       });
-      // Clean up dead blocks after physics update
       Matter.Events.on(this.engine, 'afterUpdate', () => {
         this.cleanupDeadBlocks();
         this.updateMapShrinking();
       });
     }
 
-    this.runner = Matter.Runner.create({
-      delta: PHYSICS_CONSTANTS.FIXED_TIMESTEP,
-      isFixed: true,
-    });
-    Matter.Runner.run(this.runner, this.engine);
+    // Check if we're in a browser or server environment
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const isBrowser = typeof (globalThis as any).window !== 'undefined' && 
+      typeof (globalThis as any).window.requestAnimationFrame === 'function';
+    
+    if (isBrowser) {
+      this.runner = Matter.Runner.create({
+        delta: PHYSICS_CONSTANTS.FIXED_TIMESTEP,
+        isFixed: true,
+      });
+      Matter.Runner.run(this.runner, this.engine);
+    } else {
+      // Server: use setInterval for physics stepping
+      this.serverIntervalId = setInterval(() => {
+        Matter.Engine.update(this.engine, PHYSICS_CONSTANTS.FIXED_TIMESTEP);
+      }, PHYSICS_CONSTANTS.FIXED_TIMESTEP);
+    }
   }
 
-  /**
-   * Stop the physics simulation
-   */
   stop(): void {
     if (this.runner) {
       Matter.Runner.stop(this.runner);
       this.runner = null;
     }
+    if (this.serverIntervalId !== null) {
+      clearInterval(this.serverIntervalId);
+      this.serverIntervalId = null;
+    }
   }
 
-  /**
-   * Manually step the simulation (for more control)
-   */
   step(delta: number = PHYSICS_CONSTANTS.FIXED_TIMESTEP): void {
     Matter.Engine.update(this.engine, delta);
   }
 
-  /**
-   * Register a contraption for connectivity tracking
-   */
   registerContraption(contraption: ContraptionLike): void {
     this.contraptions.set(contraption.id, contraption);
   }
 
-  /**
-   * Set the effect manager for visual effects
-   */
-  setEffectManager(effects: EffectManager): void {
+  setEffectManager(effects: EffectsInterface): void {
     this.effects = effects;
   }
   
-  /**
-   * Add a body to the physics world
-   */
   addBody(body: Matter.Body): void {
     Matter.World.add(this.world, body);
-    // Tag with engine reference for convenience (used by blocks to queue forces)
     (body as unknown as { physics?: PhysicsEngine }).physics = this;
-    // Tag with effects manager for visual effects
-    (body as unknown as { effects?: EffectManager }).effects = this.effects || undefined;
+    (body as unknown as { effects?: EffectsInterface }).effects = this.effects || undefined;
   }
 
-  /**
-   * Add a constraint to the physics world
-   */
   addConstraint(constraint: Matter.Constraint): void {
     Matter.World.add(this.world, constraint);
   }
 
-  /**
-   * Remove a constraint from the physics world
-   */
   removeConstraint(constraint: Matter.Constraint): void {
     Matter.World.remove(this.world, constraint);
   }
 
-  /**
-   * Remove a body from the physics world
-   */
   removeBody(body: Matter.Body): void {
     Matter.World.remove(this.world, body);
   }
 
-  /**
-   * Create a simple box body (for testing/contraptions)
-   */
   createBox(x: number, y: number, width: number, height: number, options?: Partial<Matter.IBodyDefinition>): Matter.Body {
     return Matter.Bodies.rectangle(x, y, width, height, options);
   }
 
-  /**
-   * Create a circle body (for wheels)
-   */
   createCircle(x: number, y: number, radius: number, options?: Partial<Matter.IBodyDefinition>): Matter.Body {
     return Matter.Bodies.circle(x, y, radius, options);
   }
 
-  /**
-   * Create a composite body from multiple parts
-   */
   createComposite(): Matter.Composite {
     return Matter.Composite.create();
   }
 
-  /**
-   * Serialize a body's state for network transmission
-   */
   serializeBody(body: Matter.Body): PhysicsBodyState {
     return {
       position: { x: body.position.x, y: body.position.y },
@@ -453,18 +405,12 @@ export class PhysicsEngine {
     };
   }
 
-  /**
-   * Apply a force to a body
-   */
   applyForce(body: Matter.Body, force: Vector2D): void {
     if (!body.isStatic) {
       Matter.Body.applyForce(body, body.position, force);
     }
   }
 
-  /**
-   * Queue a force to be applied on the next physics tick
-   */
   queueForce(body: Matter.Body, force: Vector2D): void {
     if (!body.isStatic) {
       const existing = this.pendingForces.get(body.id) || { x: 0, y: 0 };
@@ -472,38 +418,23 @@ export class PhysicsEngine {
     }
   }
 
-  /**
-   * Get all bodies in the world
-   */
   getAllBodies(): Matter.Body[] {
     return Matter.Composite.allBodies(this.world);
   }
 
-  /**
-   * Enable map shrinking (call when match starts in PVP mode)
-   */
   enableMapShrinking(): void {
     this.mapShrinkStartTime = Date.now();
   }
 
-  /**
-   * Get all constraints in the world
-   */
   getAllConstraints(): Matter.Constraint[] {
     return Matter.Composite.allConstraints(this.world);
   }
 
-  /**
-   * Clear all non-static bodies from the world
-   */
   clear(): void {
     const bodies = this.getAllBodies().filter(body => !body.isStatic);
     Matter.World.remove(this.world, bodies);
   }
 
-  /**
-   * Clean up resources
-   */
   destroy(): void {
     this.stop();
     Matter.World.clear(this.world, false);
@@ -515,8 +446,6 @@ export class PhysicsEngine {
     if (v === 0) this.wheelInput.delete(playerId); else this.wheelInput.set(playerId, v);
   }
 
-  // Hinge input is handled entirely within HingeBlock; no physics hook needed
-
   public setBot(playerId: string, isBot: boolean): void {
     if (isBot) this.botPlayers.add(playerId); else this.botPlayers.delete(playerId);
   }
@@ -525,3 +454,4 @@ export class PhysicsEngine {
     if (value) this.rocketHold.set(playerId, true); else this.rocketHold.delete(playerId);
   }
 }
+

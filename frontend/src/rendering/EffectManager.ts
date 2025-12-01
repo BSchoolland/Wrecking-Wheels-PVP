@@ -4,8 +4,8 @@
  */
 
 import Matter from 'matter-js';
-import type { BaseBlock } from '@/game/contraptions/blocks/BaseBlock';
-import { WheelBlock } from '@/game/contraptions/blocks/WheelBlock';
+import type { BaseBlock } from '@shared/contraptions/blocks/BaseBlock';
+import { WheelBlock } from '@shared/contraptions/blocks/WheelBlock';
 
 interface Particle {
   x: number;

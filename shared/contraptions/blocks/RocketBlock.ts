@@ -6,7 +6,7 @@ import Matter from 'matter-js';
 import { BaseBlock, AttachmentDirection, PhysicsSpawnResult } from './BaseBlock';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 import { PHYSICS_CONSTANTS } from '@shared/constants/physics';
-import { InputRegistry } from '@/game/input/InputSystem';
+import { InputRegistry } from '@shared/input/InputSystem';
 
 export class RocketBlock extends BaseBlock {
   static readonly INPUT_DELAY_MS = 250;

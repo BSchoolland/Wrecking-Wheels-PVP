@@ -4,12 +4,12 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { NetworkedGame } from '@/game/NetworkedGame';
-import { PhysicsEngine } from '@/core/physics/PhysicsEngine';
+import { PhysicsEngine } from '@shared/physics/PhysicsEngine';
 import { Renderer } from '@/rendering/Renderer';
 import { WORLD_BOUNDS } from '@shared/constants/physics';
 import { ContraptionBuilder } from '@/ui/components/ContraptionBuilder';
 import { ContraptionTester } from '@/ui/components/ContraptionTester';
-import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
+import type { ContraptionSaveData } from '@shared/contraptions/Contraption';
 import type { PlayerReadyCommand } from '@shared/types/Commands';
 import './App.css';
 
@@ -39,13 +39,12 @@ const initializeDefaults = async () => {
 };
 
 type View = 'menu' | 'lobby' | 'game' | 'builder' | 'test';
-type Role = 'host' | 'client';
 
-type QueueJoinResponse = { success: boolean; lobbyId: string; role: Role; status: 'waiting' | 'ready'; players?: string[] };
+type QueueJoinResponse = { success: boolean; lobbyId: string; role: 'host' | 'client'; status: 'waiting' | 'ready'; players?: string[] };
 
 function App() {
   const [view, setView] = useState<View>('menu');
-  const [role, setRole] = useState<Role>('host');
+  const [playerIndex, setPlayerIndex] = useState<number>(0); // 0 = first player, 1 = second
   const [lobbyId, setLobbyId] = useState('');
   const [playerId] = useState(`player-${Date.now()}`);
   const [selectedContraption, setSelectedContraption] = useState<ContraptionSaveData | null>(null);
@@ -79,19 +78,20 @@ function App() {
       const data = (await res.json()) as QueueJoinResponse;
       if (!data.success) throw new Error('Failed to join queue');
       setLobbyId(data.lobbyId);
-      setRole(data.role);
+      // First player (host role) is index 0, second player (client role) is index 1
+      setPlayerIndex(data.role === 'host' ? 0 : 1);
       setView('lobby');
       if (data.status === 'waiting') {
-        startPollingForReady(data.lobbyId);
+        startPollingForReady(data.lobbyId, data.role === 'host' ? 0 : 1);
       } else {
         setIsWaiting(false);
         // Lobby is already ready (both players matched), create NetworkedGame immediately
         if (canvasRef.current && !gameRef.current) {
           gameRef.current = new NetworkedGame({
             canvas: canvasRef.current,
-            role: data.role,
             lobbyId: data.lobbyId,
             playerId,
+            playerIndex: data.role === 'host' ? 0 : 1,
             contraption: selectedContraption || undefined,
             onReturnToMenu: () => {
               gameRef.current?.destroy();
@@ -109,7 +109,7 @@ function App() {
     }
   };
 
-  const startPollingForReady = (id: string) => {
+  const startPollingForReady = (id: string, pIndex: number) => {
     if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
     pollIntervalRef.current = window.setInterval(async () => {
       try {
@@ -122,9 +122,9 @@ function App() {
           if (!gameRef.current && canvasRef.current) {
             gameRef.current = new NetworkedGame({
               canvas: canvasRef.current,
-              role,
               lobbyId: id,
               playerId,
+              playerIndex: pIndex,
               contraption: selectedContraption || undefined,
               onReturnToMenu: () => {
                 gameRef.current?.destroy();
@@ -192,14 +192,14 @@ function App() {
     if (view === 'lobby' && lobbyId && !isWaiting && canvasRef.current && !gameRef.current) {
       gameRef.current = new NetworkedGame({
         canvas: canvasRef.current,
-        role,
         lobbyId,
         playerId,
+        playerIndex,
         contraption: selectedContraption || undefined,
       });
       gameRef.current.start();
     }
-  }, [view, lobbyId, isWaiting, role, playerId]);
+  }, [view, lobbyId, isWaiting, playerIndex, playerId]);
   
   // Update contraption when selected (if NetworkedGame already exists)
   useEffect(() => {
@@ -219,9 +219,9 @@ function App() {
         // Fallback: create if somehow not created in lobby
         gameRef.current = new NetworkedGame({
           canvas: canvasRef.current,
-          role,
           lobbyId,
           playerId,
+          playerIndex,
           contraption: selectedContraption,
           onReturnToMenu: () => {
             gameRef.current?.destroy();
@@ -238,7 +238,7 @@ function App() {
         }
       };
     }
-  }, [view, role, lobbyId, playerId, selectedContraption]);
+  }, [view, playerIndex, lobbyId, playerId, selectedContraption]);
 
   // Background physics + render loop for non-game views
   useEffect(() => {

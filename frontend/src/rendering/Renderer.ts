@@ -7,7 +7,7 @@ import type { GameState } from '@shared/types/GameState';
 import { Camera } from '@/core/Camera';
 import { EffectManager } from './EffectManager';
 import type * as Matter from 'matter-js';
-import { CONTRAPTION_DEBUG } from '@/game/contraptions';
+import { CONTRAPTION_DEBUG } from '@shared/contraptions';
 import { BlockRenderer } from './BlockRenderer';
 import { SpriteManager } from './SpriteManager';
 

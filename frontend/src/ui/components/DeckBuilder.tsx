@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import type { ContraptionSaveData } from '@/game/contraptions/Contraption';
+import type { ContraptionSaveData } from '@shared/contraptions/Contraption';
 
 export type DeckSlot = 1 | 2 | 3;
 

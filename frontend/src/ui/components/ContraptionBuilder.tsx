@@ -4,12 +4,12 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import Matter from 'matter-js';
-import { Contraption, BlockType, createBlock, blockFromData } from '@/game/contraptions';
-import { BLOCK_METADATA, BLOCKS_ORDER } from '@/game/contraptions';
-import type { ContraptionSaveData, VehicleClass } from '@/game/contraptions/Contraption';
+import { Contraption, BlockType, createBlock, blockFromData } from '@shared/contraptions';
+import { BLOCK_METADATA, BLOCKS_ORDER } from '@shared/contraptions';
+import type { ContraptionSaveData, VehicleClass } from '@shared/contraptions/Contraption';
 import { BlockRenderer } from '@/rendering/BlockRenderer';
 import { SpriteManager } from '@/rendering/SpriteManager';
-import { getTestSpawnPosition, createMapBoundaries } from '@/game/terrain/MapLoader';
+import { getTestSpawnPosition, createMapBoundaries } from '@shared/terrain/MapLoader';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 import { Camera } from '@/core/Camera';
 import './ContraptionBuilder.css';

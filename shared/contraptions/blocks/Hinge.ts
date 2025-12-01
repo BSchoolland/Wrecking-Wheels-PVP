@@ -6,7 +6,7 @@ import Matter from 'matter-js';
 import { BaseBlock, AttachmentDirection, PhysicsSpawnResult } from './BaseBlock';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 import { PHYSICS_CONSTANTS } from '@shared/constants/physics';
-import { InputRegistry } from '@/game/input/InputSystem';
+import { InputRegistry } from '@shared/input/InputSystem';
 
 export class HingeBlock extends BaseBlock {
   // Public so builder UI can reference for rendering
@@ -313,7 +313,7 @@ export class HingeBlock extends BaseBlock {
       // No local visuals for hinge yet
     },
     makePayload: (e) => {
-      const key = e.key;
+      const key = (e as { key?: string }).key;
       if (key === 'q' || key === 'Q') return { value: -1 };
       if (key === 'e' || key === 'E') return { value: 1 };
       return undefined;

@@ -4,7 +4,7 @@
 
 import Matter from 'matter-js';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
-import type { BlockType } from '@/game/contraptions';
+import type { BlockType } from '@shared/contraptions';
 export type AttachmentDirection = 'top' | 'right' | 'bottom' | 'left';
 export type DamageType = 'sharp' | 'blunt' | 'blast';
 

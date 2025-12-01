@@ -5,7 +5,7 @@
 import Matter from 'matter-js';
 import { WORLD_BOUNDS } from '@shared/constants/physics';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
-import type { VehicleClass } from '@/game/contraptions/Contraption';
+import type { VehicleClass } from '@shared/contraptions/Contraption';
 
 // Ground constants
 export const GROUND_BLOCK_SIZE = BUILDER_CONSTANTS.GROUND_BLOCK_SIZE;

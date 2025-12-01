@@ -3,7 +3,7 @@
  */
 
 import Matter from 'matter-js';
-import { BaseBlock, AttachmentDirection, PhysicsSpawnResult } from './BaseBlock';
+import { BaseBlock, AttachmentDirection, PhysicsSpawnResult, DamageType } from './BaseBlock';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
 import { PHYSICS_CONSTANTS } from '@shared/constants/physics';
 
@@ -61,7 +61,8 @@ export class GrayBlock extends BaseBlock {
       primaryBody: body,
     };
   }
-  applyResistance(amount: number, type: import('./BaseBlock').DamageType): number {
+
+  applyResistance(amount: number, type: DamageType): number {
     if (type === 'sharp') {
       return amount * 0.05;
     }
