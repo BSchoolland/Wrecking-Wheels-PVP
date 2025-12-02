@@ -221,14 +221,14 @@ export class PhysicsEngine {
                 Matter.Body.applyForce(targetBody, targetBody.position, force);
               }
 
-              if (this.effects) {
+              if (!this.isServer && this.effects) {
                 this.effects.spawnImpactParticles?.(center.x, center.y, finalDamage, nx * knock, ny * knock);
                 this.effects.spawnDamageNumber?.(targetBody.position.x, targetBody.position.y - 15, finalDamage);
               }
             }
           });
 
-          if (this.effects) {
+          if (!this.isServer && this.effects) {
             this.effects.spawnExplosionFlash?.(center.x, center.y, BLAST_RADIUS, 200);
           }
         }
@@ -236,8 +236,8 @@ export class PhysicsEngine {
         this.bodiesToRemove.add(body);
         const contraptionId = (body as unknown as { contraptionId?: string }).contraptionId;
         if (contraptionId) affectedContraptions.add(contraptionId);
-        
-        if (this.effects) {
+
+        if (!this.isServer && this.effects) {
           this.effects.createGhostBlock?.(body, block);
         }
       }
@@ -248,8 +248,8 @@ export class PhysicsEngine {
         this.bodiesToRemove.add(body);
         const contraptionId = (body as unknown as { contraptionId?: string }).contraptionId;
         if (contraptionId) affectedContraptions.add(contraptionId);
-        
-        if (this.effects) {
+
+        if (!this.isServer && this.effects) {
           this.effects.createGhostBlock?.(body, block);
         }
       }
