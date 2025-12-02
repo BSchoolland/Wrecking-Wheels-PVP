@@ -11,6 +11,7 @@ import { getTestSpawnPosition } from '@shared/terrain/MapLoader';
 import type { GameCommand, ContraptionData, UIState, GameEvent, BlockInputCommand, PlayerReadyCommand } from '@shared/types/Commands';
 import type { BlockData } from '@shared/contraptions/blocks/BaseBlock';
 import { BaseBlock } from '@shared/contraptions/blocks/BaseBlock';
+import { ServerEffectQueue, type EffectEvent } from './ServerEffectQueue';
 
 // Extended Matter.js types
 interface ExtendedBody extends Matter.Body {
@@ -33,13 +34,16 @@ interface SerializableBody {
   };
   ownerId?: string;
   label?: string;
-  spriteId?: string;
+  // Static sprite metadata (only sent once per body)
+  spriteId?: string;  // format: "sheet:row" (no column)
   spriteOffsetX?: number;
   spriteOffsetY?: number;
   spriteFlipX?: boolean;
   spriteFlipY?: boolean;
   spriteWidth?: number;
   spriteHeight?: number;
+  // Dynamic sprite data (sent every frame)
+  spriteCol?: number;
   groundColor?: string;
   contraptionDirection?: number;
 }
@@ -53,19 +57,6 @@ interface SerializableConstraint {
   length?: number;
   stiffness?: number;
   damping?: number;
-}
-
-interface EffectEvent {
-  type: 'impact' | 'damage' | 'tint' | 'explosion' | 'building';
-  x: number;
-  y: number;
-  damage?: number;
-  bodyId?: number;
-  vx?: number;
-  vy?: number;
-  radius?: number;
-  durationMs?: number;
-  playerId?: string;
 }
 
 export interface NetworkSnapshot {
@@ -87,6 +78,7 @@ export class GameSession {
   private players: string[] = [];
   private physics: PhysicsEngine;
   private callbacks: GameSessionCallbacks;
+  private effectQueue: ServerEffectQueue;
   
   private isRunning = false;
   private gameLoopInterval: ReturnType<typeof setInterval> | null = null;
@@ -97,9 +89,6 @@ export class GameSession {
   private syncInterval = 50; // 20Hz
   private lastUISyncTime = 0;
   private uiSyncInterval = 200;
-  
-  // Effect events
-  private effectEvents: EffectEvent[] = [];
   
   // Body tracking for delta sync
   private sentBodies: Set<string> = new Set();
@@ -121,7 +110,9 @@ export class GameSession {
     this.players = players;
     this.callbacks = callbacks;
     
-    this.physics = new PhysicsEngine();
+    this.physics = new PhysicsEngine({ isServer: true });
+    this.effectQueue = new ServerEffectQueue();
+    this.physics.setEffectManager(this.effectQueue);
   }
 
   start(): void {
@@ -314,6 +305,7 @@ export class GameSession {
         const block = (body as unknown as { block?: BaseBlock }).block;
         const isGround = body.isStatic && body.label === 'ground';
         
+        // Static sprite metadata (only needs to be sent once per body)
         let spriteId: string | undefined;
         let spriteOffsetX: number | undefined;
         let spriteOffsetY: number | undefined;
@@ -321,11 +313,14 @@ export class GameSession {
         let spriteFlipY: boolean | undefined;
         let spriteWidth: number | undefined;
         let spriteHeight: number | undefined;
+        // Dynamic sprite column (sent every frame)
+        const spriteCol = (body as unknown as { spriteCol?: number }).spriteCol;
         
         if (!isGround) {
-          const existingSprite = (body as unknown as { sprite?: { sheet: string; row: number; col?: number; offsetX?: number; offsetY?: number; flipX?: boolean; flipY?: boolean; width?: number; height?: number } }).sprite;
+          const existingSprite = (body as unknown as { sprite?: { sheet: string; row: number; offsetX?: number; offsetY?: number; flipX?: boolean; flipY?: boolean; width?: number; height?: number } }).sprite;
           if (existingSprite) {
-            spriteId = `${existingSprite.sheet}:${existingSprite.row}${existingSprite.col !== undefined ? `:${existingSprite.col}` : ''}`;
+            // spriteId is just sheet:row (no column - that's sent separately)
+            spriteId = `${existingSprite.sheet}:${existingSprite.row}`;
             spriteOffsetX = existingSprite.offsetX;
             spriteOffsetY = existingSprite.offsetY;
             spriteFlipX = existingSprite.flipX;
@@ -335,9 +330,8 @@ export class GameSession {
           } else if (block) {
             const sheet = block.getSpritesheetName();
             const row = block.getSpriteRow();
-            const col = (body as unknown as { spriteCol?: number }).spriteCol || 0;
             if (sheet) {
-              spriteId = `${sheet}:${row}${col !== 0 ? `:${col}` : ''}`;
+              spriteId = `${sheet}:${row}`;
               const offset = block.getSpriteOffset();
               spriteOffsetX = offset.x;
               spriteOffsetY = offset.y;
@@ -418,12 +412,19 @@ export class GameSession {
           spriteFlipY: spriteFlipY !== undefined ? spriteFlipY : undefined,
           spriteWidth: spriteWidth !== undefined ? spriteWidth : undefined,
           spriteHeight: spriteHeight !== undefined ? spriteHeight : undefined,
+          spriteCol,  // Dynamic - sent every frame
           groundColor: isGround && isNew ? ((body.render as Matter.IBodyRenderOptions)?.fillStyle || '#555555') : undefined,
           contraptionDirection: (body as unknown as { contraptionDirection?: number }).contraptionDirection,
         };
       }),
-      effects: this.effectEvents.length > 0 ? [...this.effectEvents] : undefined,
+      effects: undefined, // Will be set below
     };
+
+    // Drain effect events from the queue
+    const effects = this.effectQueue.drain();
+    if (effects.length > 0) {
+      snapshot.effects = effects;
+    }
 
     const constraints = this.physics.getAllConstraints();
     if (constraints.length > 0) {
@@ -450,8 +451,6 @@ export class GameSession {
         snapshot.constraints = serializedConstraints;
       }
     }
-    
-    this.effectEvents = [];
     
     const currentBodyIds = new Set(snapshot.bodies.map(b => b.id));
     this.sentBodies.forEach(id => {

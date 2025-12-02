@@ -35,6 +35,7 @@ interface ContraptionLike {
 
 interface PhysicsEngineOptions {
   createBoundaries?: boolean;
+  isServer?: boolean;  // Set to true on server, false/undefined on client
 }
 
 export class PhysicsEngine {
@@ -53,6 +54,7 @@ export class PhysicsEngine {
   private activeCollisions: Map<string, number> = new Map();
   private botPlayers: Set<string> = new Set();
   private rocketHold: Map<string, boolean> = new Map();
+  private isServer: boolean;
   
   // Map shrinking
   private groundBodies: Matter.Body[] = [];
@@ -60,7 +62,8 @@ export class PhysicsEngine {
   private lastBlockDestroyTime: number | null = null;
 
   constructor(options: PhysicsEngineOptions = {}) {
-    const { createBoundaries = true } = options;
+    const { createBoundaries = true, isServer = false } = options;
+    this.isServer = isServer;
     this.engine = Matter.Engine.create({
       gravity: { x: 0, y: PHYSICS_CONSTANTS.GRAVITY, scale: 0.001 },
     });
@@ -309,7 +312,10 @@ export class PhysicsEngine {
           if (ownerId && body.label?.endsWith('-rocket')) {
             const hold = this.rocketHold.get(ownerId) || false;
             (body as unknown as { rocketThrusting?: boolean }).rocketThrusting = hold;
-            (body as unknown as { spriteCol?: number }).spriteCol = hold ? 1 : 0;
+            // Only server updates spriteCol; client reads it from network snapshots
+            if (this.isServer) {
+              (body as unknown as { spriteCol?: number }).spriteCol = hold ? 1 : 0;
+            }
           }
         }
 

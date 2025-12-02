@@ -35,13 +35,16 @@ interface SerializableBody {
   };
   ownerId?: string;
   label?: string;
-  spriteId?: string;
+  // Static sprite metadata (only sent once per body)
+  spriteId?: string;  // format: "sheet:row" (no column)
   spriteOffsetX?: number;
   spriteOffsetY?: number;
   spriteFlipX?: boolean;
   spriteFlipY?: boolean;
   spriteWidth?: number;
   spriteHeight?: number;
+  // Dynamic sprite data (sent every frame)
+  spriteCol?: number;
   groundColor?: string;
   contraptionDirection?: number;
 }
@@ -291,7 +294,7 @@ export class NetworkedGame {
     snapshot.bodies.forEach(body => {
       if (body.ownerId && !this.ownerCache.has(body.id)) this.ownerCache.set(body.id, body.ownerId);
       if (body.label && !this.labelCache.has(body.id)) this.labelCache.set(body.id, body.label);
-      if (body.spriteId && !this.spriteIdCache.has(body.id)) this.spriteIdCache.set(body.id, body.spriteId);
+      if (body.spriteId) this.spriteIdCache.set(body.id, body.spriteId);
       if (body.spriteOffsetX !== undefined && !this.spriteOffsetXCache.has(body.id)) this.spriteOffsetXCache.set(body.id, body.spriteOffsetX);
       if (body.spriteOffsetY !== undefined && !this.spriteOffsetYCache.has(body.id)) this.spriteOffsetYCache.set(body.id, body.spriteOffsetY);
       if (body.spriteFlipX !== undefined && !this.spriteFlipXCache.has(body.id)) this.spriteFlipXCache.set(body.id, body.spriteFlipX);
@@ -319,7 +322,7 @@ export class NetworkedGame {
             }
             break;
           case 'explosion':
-            this.renderer.effects.spawnExplosionFlash(effect.x, effect.y, effect.radius || 40, 200);
+            this.renderer.effects.spawnExplosionFlash(effect.x, effect.y, effect.radius || 40, effect.durationMs || 200);
             break;
           case 'building':
             this.renderer.effects.spawnBuildingDust(effect.x, effect.y, effect.durationMs || 500, effect.radius || 50);
@@ -416,13 +419,13 @@ export class NetworkedGame {
       extendedBody.render.fillStyle = fill;
       (extendedBody.render as { healthPercent?: number }).healthPercent = bodyState.render.healthPercent;
 
+      // Static sprite metadata from snapshot or cache
       const spriteId = bodyState.spriteId ?? this.spriteIdCache.get(bodyState.id);
       if (spriteId) {
         const parts = spriteId.split(':');
         if (parts.length >= 2) {
           const sheet = parts[0];
           const row = parseInt(parts[1], 10);
-          const col = parts[2] ? parseInt(parts[2], 10) : undefined;
           const offsetX = bodyState.spriteOffsetX ?? (this.spriteOffsetXCache.get(bodyState.id) ?? 0);
           const offsetY = bodyState.spriteOffsetY ?? (this.spriteOffsetYCache.get(bodyState.id) ?? 0);
           const flipX = bodyState.spriteFlipX ?? (this.spriteFlipXCache.get(bodyState.id) ?? false);
@@ -436,7 +439,6 @@ export class NetworkedGame {
             offsetX,
             offsetY,
           };
-          if (col !== undefined) sprite.col = col;
           if (flipX) sprite.flipX = flipX;
           if (flipY) sprite.flipY = flipY;
           if (spriteWidth !== undefined) sprite.width = spriteWidth;
@@ -445,6 +447,9 @@ export class NetworkedGame {
           (extendedBody as unknown as { sprite?: typeof sprite }).sprite = sprite;
         }
       }
+      
+      // Dynamic spriteCol - only server sets this, client just reads it
+      (extendedBody as unknown as { spriteCol?: number }).spriteCol = bodyState.spriteCol ?? 0;
 
       const velocity = bodyState.velocity ?? { x: 0, y: 0 };
 
