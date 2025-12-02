@@ -119,8 +119,9 @@ export class GameSession {
     if (this.isRunning) return;
     this.isRunning = true;
     
-    // Start physics (will be paused during countdown)
-    this.physics.start();
+    // Ensure physics is NOT running at session start; stay frozen until countdown completes
+    this.physics.stop();
+    this.callbacks.onEvent({ type: 'freeze' });
     
     // Start game loop at 60Hz
     this.gameLoopInterval = setInterval(() => this.gameLoop(), 1000 / 60);
@@ -204,6 +205,7 @@ export class GameSession {
           this.countdownTimeoutId = setTimeout(() => {
             this.countdownActive = false;
             this.bothPlayersReady = true;
+            this.callbacks.onEvent({ type: 'unfreeze' });
             this.physics.start();
             this.physics.enableMapShrinking();
             this.countdownTimeoutId = null;

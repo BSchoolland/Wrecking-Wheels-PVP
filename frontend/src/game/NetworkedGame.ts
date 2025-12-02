@@ -134,6 +134,7 @@ export class NetworkedGame {
   private clientSimulatedTick = 0;
   private clientPendingCorrections: Map<number, NetworkSnapshot> = new Map();
   private clientPhysicsStarted = false;
+  private serverFrozen = true;
 
   // Cooldowns per player (disabled)
   private buildCooldowns: Map<string, number> = new Map();
@@ -148,6 +149,8 @@ export class NetworkedGame {
   
   // Win state
   private winState: { winner: string; loser: string } | null = null;
+  private displayWinState: { winner: string; loser: string } | null = null;
+  private winDelayTimeoutId: number | null = null;
   
   public energy: number = 0;
 
@@ -262,8 +265,17 @@ export class NetworkedGame {
     
     this.lastReceivedTick = snapshot.tick;
     
-    // Start client physics on first snapshot
-    if (!this.clientPhysicsStarted && this.physics) {
+    // If server is frozen, directly apply the latest snapshot for rendering without stepping physics.
+    // This keeps visuals accurate while everything stays still.
+    if (this.serverFrozen) {
+      this.applyClientSnapshot(snapshot);
+      // Keep clientSimulatedTick aligned to the latest snapshot so we don't accumulate buffer
+      this.clientSimulatedTick = Math.max(this.clientSimulatedTick, snapshot.tick);
+      return;
+    }
+    
+    // Start client physics only when server is not frozen
+    if (!this.clientPhysicsStarted && this.physics && !this.serverFrozen) {
       this.physics.start();
       this.clientPhysicsStarted = true;
       this.clientSimulatedTick = Math.max(0, snapshot.tick);
@@ -508,11 +520,30 @@ export class NetworkedGame {
     switch (event.type) {
       case 'player-joined':
         break;
+      case 'freeze':
+        this.serverFrozen = true;
+        if (this.physics) {
+          this.physics.stop();
+        }
+        this.clientPhysicsStarted = false;
+        break;
+      case 'unfreeze':
+        // Allow physics to start on the next state update to sync tick
+        this.serverFrozen = false;
+        break;
       case 'countdown-start':
         this.startCountdown();
         break;
       case 'game-over':
         this.winState = { winner: event.winner, loser: event.loser };
+        // Delay displaying win screen by 2000ms to let players see final moments
+        if (this.winDelayTimeoutId !== null) {
+          window.clearTimeout(this.winDelayTimeoutId);
+        }
+        this.winDelayTimeoutId = window.setTimeout(() => {
+          this.displayWinState = this.winState;
+          this.winDelayTimeoutId = null;
+        }, 2000);
         break;
     }
   }
@@ -614,7 +645,7 @@ export class NetworkedGame {
    * Render win/loss overlay
    */
   private renderWinScreen(): void {
-    if (!this.winState) return;
+    if (!this.displayWinState) return;
     
     const ctx = this.renderer.getContext();
     const width = this.canvas.width;
@@ -635,7 +666,7 @@ export class NetworkedGame {
     ctx.shadowOffsetX = 0;
     ctx.shadowOffsetY = 0;
     
-    if (this.winState.winner === this.playerId) {
+    if (this.displayWinState.winner === this.playerId) {
       ctx.fillStyle = '#00ff00';
       ctx.fillText('YOU WIN!', width / 2, height / 2);
     } else {
@@ -650,7 +681,7 @@ export class NetworkedGame {
    * Get the current win state
    */
   getWinState(): { winner: string; loser: string } | null {
-    return this.winState;
+    return this.displayWinState;
   }
 
   /**
@@ -673,6 +704,10 @@ export class NetworkedGame {
     if (this.countdownTimeoutId !== null) {
       window.clearTimeout(this.countdownTimeoutId);
       this.countdownTimeoutId = null;
+    }
+    if (this.winDelayTimeoutId !== null) {
+      window.clearTimeout(this.winDelayTimeoutId);
+      this.winDelayTimeoutId = null;
     }
     if (this.physics && this.clientConstraints.size > 0) {
       this.clientConstraints.forEach(constraint => this.physics!.removeConstraint(constraint));
@@ -700,5 +735,12 @@ export class NetworkedGame {
       mine: 10,
       enemy: 10,
     };
+  }
+
+  /**
+   * Whether the network connection to the server is established
+   */
+  isConnected(): boolean {
+    return this.network.isConnected();
   }
 }

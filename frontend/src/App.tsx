@@ -157,14 +157,22 @@ function App() {
 
   const startGame = () => {
     // Send player-ready command when Ready button is clicked
-    if (gameRef.current && selectedContraption) {
-      const readyCmd: PlayerReadyCommand = {
-        type: 'player-ready',
-        playerId,
-        contraption: selectedContraption,
-      };
-      gameRef.current.sendReadyCommand(readyCmd);
-    }
+    if (!gameRef.current || !selectedContraption) { setView('game'); return; }
+
+    const trySendReady = (retriesLeft: number) => {
+      if (gameRef.current?.isConnected()) {
+        const readyCmd: PlayerReadyCommand = {
+          type: 'player-ready',
+          playerId,
+          contraption: selectedContraption,
+        };
+        gameRef.current.sendReadyCommand(readyCmd);
+      } else if (retriesLeft > 0) {
+        // Retry shortly; avoids dropping ready if clicked before websocket is ready
+        window.setTimeout(() => trySendReady(retriesLeft - 1), 150);
+      }
+    };
+    trySendReady(20); // ~3s total
     setView('game');
   };
 
