@@ -5,7 +5,7 @@
 export { BaseBlock } from './blocks/BaseBlock';
 export type { BlockData, AttachmentDirection, PhysicsSpawnResult, BodySpec } from './blocks/BaseBlock';
 
-export { Contraption, setContraptionDebug, CONTRAPTION_DEBUG, setContraptionStaticDebug, CONTRAPTION_STATIC_DEBUG } from './Contraption';
+export { Contraption } from './Contraption';
 export type { ContraptionSaveData } from './Contraption';
 
 // Helper to create a block by type

@@ -6,17 +6,13 @@
 import { PhysicsEngine } from '@shared/physics/PhysicsEngine';
 import { Renderer } from '@/rendering/Renderer';
 import { NetworkManager } from '@/core/networking/NetworkManager';
-import type { GameCommand, ContraptionData, UIState, GameEvent, BlockInputCommand, PlayerReadyCommand } from '@shared/types/Commands';
+import type { GameCommand, UIState, GameEvent, BlockInputCommand, PlayerReadyCommand } from '@shared/types/Commands';
 import type { GameState } from '@shared/types/GameState';
 import Matter from 'matter-js';
-import { Contraption, blockFromData, BLOCK_REGISTRY } from '@shared/contraptions';
+import { BLOCK_REGISTRY } from '@shared/contraptions';
 import type { ContraptionSaveData } from '@shared/contraptions/Contraption';
-import type { BlockData } from '@shared/contraptions/blocks/BaseBlock';
-import { BaseBlock } from '@shared/contraptions/blocks/BaseBlock';
-import { WORLD_BOUNDS } from '@shared/constants/physics';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
-import { InputController, InputRegistry } from '@/game/input/InputSystem';
-import { getTestSpawnPosition } from '@shared/terrain/MapLoader';
+import { InputController } from '@/game/input/InputSystem';
 
 // Extended Matter.js types for our use case
 interface ExtendedBody extends Matter.Body {

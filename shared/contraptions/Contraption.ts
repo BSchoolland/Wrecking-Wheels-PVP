@@ -6,6 +6,7 @@ import Matter from 'matter-js';
 import { BaseBlock } from './blocks/BaseBlock';
 import type { BlockData, AttachmentDirection } from './blocks/BaseBlock';
 import { BUILDER_CONSTANTS } from '@shared/constants/builder';
+import { CONTRAPTION_DEBUG, CONTRAPTION_STATIC_DEBUG } from '@shared/constants/testing';
 
 export type VehicleClass = 'light' | 'medium' | 'heavy';
 
@@ -18,11 +19,6 @@ export interface ContraptionSaveData {
   isBot?: boolean;
   vehicleClass?: VehicleClass;
   }
-export let CONTRAPTION_DEBUG = true;
-export function setContraptionDebug(value: boolean) { CONTRAPTION_DEBUG = value; }
-
-export let CONTRAPTION_STATIC_DEBUG = false;
-export function setContraptionStaticDebug(value: boolean) { CONTRAPTION_STATIC_DEBUG = value; }
 
 type ConstraintRender = { visible?: boolean; lineWidth?: number; strokeStyle?: string };
 type RenderableConstraint = Matter.Constraint & { render?: ConstraintRender };

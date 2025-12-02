@@ -5,6 +5,7 @@
 
 import type { GameState } from '@shared/types/GameState';
 import type { GameCommand, UIState, GameEvent } from '@shared/types/Commands';
+import { SIMULATE_POOR_NETWORK, POOR_NETWORK_CONSTANTS } from '@shared/constants/testing';
 
 export type NetworkRole = 'host' | 'client'; // Kept for API compatibility, but no longer meaningful
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'failed';
@@ -39,6 +40,10 @@ export class NetworkManager {
   private estimatedOneWayMs: number = 0;
   private rttQueue: number[] = [];
   private readonly MAX_RTT_SAMPLES = 5;
+  
+  // Poor network simulation
+  private pendingMessages: Array<{ data: string; delay: number }> = [];
+  private messageSimulationIntervalId: number | null = null;
 
   constructor(config: NetworkManagerConfig) {
     this.lobbyId = config.lobbyId;
@@ -128,7 +133,7 @@ export class NetworkManager {
         this.onEvent(message.payload as unknown as GameEvent);
         break;
 
-      case 'pong':
+      case 'pong': {
         // RTT measurement response
         const t0 = (message.payload as { t: number })?.t;
         if (typeof t0 === 'number') {
@@ -144,13 +149,94 @@ export class NetworkManager {
             : oneWay;
         }
         break;
+      }
     }
+  }
+
+  /**
+   * Simulate poor network conditions (latency, packet loss, variability)
+   */
+  private simulateNetworkConditions(messageData: string): void {
+    if (!SIMULATE_POOR_NETWORK) {
+      // No simulation - send immediately
+      if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(messageData);
+      }
+      return;
+    }
+
+    // Simulate packet loss
+    const packetLossChance = Math.random();
+    if (packetLossChance < POOR_NETWORK_CONSTANTS.packetLossPercent) {
+      console.log('[Network Sim] Packet dropped (loss)');
+      return;
+    }
+
+    // Calculate delay with variability
+    const baseLatency = POOR_NETWORK_CONSTANTS.latency;
+    const variability = POOR_NETWORK_CONSTANTS.packetVariability;
+    const randomVariability = (Math.random() - 0.5) * 2 * variability; // -variability to +variability
+    const totalDelay = Math.max(0, baseLatency + randomVariability);
+
+    // Queue message for delayed delivery
+    this.pendingMessages.push({
+      data: messageData,
+      delay: totalDelay,
+    });
+
+    // Ensure simulation interval is running
+    if (!this.messageSimulationIntervalId) {
+      this.startMessageSimulation();
+    }
+
+    console.log(
+      `[Network Sim] Message queued with delay: ${totalDelay.toFixed(2)}ms (base: ${baseLatency}ms, var: ${randomVariability.toFixed(2)}ms)`
+    );
+  }
+
+  /**
+   * Process queued messages with simulated delays
+   */
+  private startMessageSimulation(): void {
+    if (this.messageSimulationIntervalId) {
+      window.clearInterval(this.messageSimulationIntervalId);
+    }
+
+    this.messageSimulationIntervalId = window.setInterval(() => {
+      let i = 0;
+
+      while (i < this.pendingMessages.length) {
+        const msg = this.pendingMessages[i];
+        msg.delay -= 16; // Assuming ~60fps interval, roughly 16ms per tick
+
+        if (msg.delay <= 0) {
+          // Time to send this message
+          if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            try {
+              this.ws.send(msg.data);
+              console.log('[Network Sim] Message sent after simulated delay');
+            } catch (error) {
+              console.error('[Network Sim] Error sending delayed message:', error);
+            }
+          }
+          this.pendingMessages.splice(i, 1);
+        } else {
+          i++;
+        }
+      }
+
+      // Stop the interval if no more messages are pending
+      if (this.pendingMessages.length === 0 && this.messageSimulationIntervalId) {
+        window.clearInterval(this.messageSimulationIntervalId);
+        this.messageSimulationIntervalId = null;
+      }
+    }, 16); // Run at ~60fps
   }
 
   private joinLobby(): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
 
-    this.ws.send(JSON.stringify({
+    this.simulateNetworkConditions(JSON.stringify({
       type: 'join-lobby',
       lobbyId: this.lobbyId,
       playerId: this.playerId,
@@ -164,7 +250,7 @@ export class NetworkManager {
     this.pingIntervalId = window.setInterval(() => {
       if (this.ws && this.ws.readyState === WebSocket.OPEN) {
         try {
-          this.ws.send(JSON.stringify({ 
+          this.simulateNetworkConditions(JSON.stringify({ 
             type: 'ping', 
             payload: { t: performance.now() } 
           }));
@@ -179,7 +265,7 @@ export class NetworkManager {
   sendCommand(command: GameCommand): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     
-    this.ws.send(JSON.stringify({
+    this.simulateNetworkConditions(JSON.stringify({
       type: 'command',
       payload: command,
     }));
@@ -220,6 +306,11 @@ export class NetworkManager {
       window.clearInterval(this.pingIntervalId); 
       this.pingIntervalId = null; 
     }
+    if (this.messageSimulationIntervalId) {
+      window.clearInterval(this.messageSimulationIntervalId);
+      this.messageSimulationIntervalId = null;
+    }
+    this.pendingMessages = [];
   }
 
   getEstimatedOneWayMs(): number { 

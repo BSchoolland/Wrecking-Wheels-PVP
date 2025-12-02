@@ -22,7 +22,6 @@ export class InputController {
   private config: InputControllerConfig;
   private keyDownSet: Set<string> = new Set();
   private localState: Record<string, unknown> = {};
-  private pendingTimers: Map<string, number> = new Map();
 
   constructor(config: InputControllerConfig) {
     this.config = config;
@@ -53,16 +52,7 @@ export class InputController {
         console.log(`[InputController] Sending input: bindingId=${b.id}, phase=press, playerId=${this.config.playerId}`);
         this.config.sendCommand(b.id, 'press', payload);
       } else if (this.config.physics) {
-        const delay = b.pressDelayMs || 0;
-        if (delay > 0) {
-          const timer = window.setTimeout(() => {
-            this.pendingTimers.delete(b.id);
-            b.apply({ role: this.config.role, playerId: this.config.playerId, physics: this.config.physics }, 'press', payload);
-          }, delay);
-          this.pendingTimers.set(b.id, timer);
-        } else {
-          b.apply({ role: this.config.role, playerId: this.config.playerId, physics: this.config.physics }, 'press', payload);
-        }
+        b.apply({ role: this.config.role, playerId: this.config.playerId, physics: this.config.physics }, 'press', payload);
       }
     }
   };
@@ -81,11 +71,6 @@ export class InputController {
         console.log(`[InputController] Sending input: bindingId=${b.id}, phase=release, playerId=${this.config.playerId}`);
         this.config.sendCommand(b.id, 'release', payload);
       } else if (this.config.physics) {
-        const t = this.pendingTimers.get(b.id);
-        if (t !== undefined) {
-          window.clearTimeout(t);
-          this.pendingTimers.delete(b.id);
-        }
         b.apply({ role: this.config.role, playerId: this.config.playerId, physics: this.config.physics }, 'release', payload);
       }
     }

@@ -115,8 +115,6 @@ export class GameSession {
   // Win state
   private winState: { winner: string; loser: string } | null = null;
   
-  // Pending inputs
-  private pendingInputs: Map<string, { playerId: string; bindingId: string; phase: 'press' | 'release' | 'change'; activateAt: number; payload?: { [k: string]: unknown } }[]> = new Map();
 
   constructor(lobbyId: string, players: string[], callbacks: GameSessionCallbacks) {
     this.lobbyId = lobbyId;
@@ -190,13 +188,10 @@ export class GameSession {
         {
           const c = command as BlockInputCommand;
           const binding = InputRegistry.getById(c.bindingId);
-          const now = Date.now();
-          const baseDelay = c.phase === 'press' ? (binding?.pressDelayMs || 0) : 0;
-          const activateAt = now + baseDelay;
-          const list = this.pendingInputs.get(c.bindingId) || [];
-          console.log(`[GameSession] Input received: bindingId=${c.bindingId}, phase=${c.phase}, playerId=${c.playerId}, delay=${baseDelay}ms, found=${!!binding}`);
-          list.push({ playerId: c.playerId, bindingId: c.bindingId, phase: c.phase, activateAt, payload: c.payload });
-          this.pendingInputs.set(c.bindingId, list);
+          if (binding) {
+            console.log(`[GameSession] Applying input: bindingId=${c.bindingId}, phase=${c.phase}, playerId=${c.playerId}`);
+            binding.apply({ role: 'host', playerId: c.playerId, physics: this.physics }, c.phase, c.payload);
+          }
         }
         break;
         
@@ -273,26 +268,6 @@ export class GameSession {
     if (!this.isRunning) return;
 
     const now = Date.now();
-
-    // Apply pending inputs
-    if (this.pendingInputs.size > 0) {
-      const toClear: string[] = [];
-      this.pendingInputs.forEach((list, bindingId) => {
-        const binding = InputRegistry.getById(bindingId);
-        if (!binding) { toClear.push(bindingId); return; }
-        const remain: typeof list = [];
-        for (const item of list) {
-          if (item.activateAt <= now) {
-            console.log(`[GameSession] Applying input: bindingId=${bindingId}, phase=${item.phase}, playerId=${item.playerId}`);
-            binding.apply({ role: 'host', playerId: item.playerId, physics: this.physics }, item.phase, item.payload);
-          } else {
-            remain.push(item);
-          }
-        }
-        if (remain.length > 0) this.pendingInputs.set(bindingId, remain); else toClear.push(bindingId);
-      });
-      if (toClear.length) toClear.forEach(id => this.pendingInputs.delete(id));
-    }
 
     // Increment tick
     this.snapshotTick++;

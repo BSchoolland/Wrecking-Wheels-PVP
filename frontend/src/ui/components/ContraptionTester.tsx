@@ -34,7 +34,7 @@ export function ContraptionTester({ contraption: contraptionData, onBack }: Cont
     rendererRef.current.setPlayerId('local');
     
     // Pre-load sprites
-    SpriteManager.loadSprites().catch((err) => {
+    SpriteManager.loadSprites().catch((_err) => {
     });
 
     // Build contraption physics
