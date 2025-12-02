@@ -180,7 +180,6 @@ export class GameSession {
           const c = command as BlockInputCommand;
           const binding = InputRegistry.getById(c.bindingId);
           if (binding) {
-            console.log(`[GameSession] Applying input: bindingId=${c.bindingId}, phase=${c.phase}, playerId=${c.playerId}`);
             binding.apply({ role: 'host', playerId: c.playerId, physics: this.physics }, c.phase, c.payload);
           }
         }

@@ -2,7 +2,7 @@ export let CONTRAPTION_DEBUG = false;
 
 export let CONTRAPTION_STATIC_DEBUG = false;
 
-export let SIMULATE_POOR_NETWORK = true;
+export let SIMULATE_POOR_NETWORK = false;
 
 // latency, packet loss percent, packet variability
 export let POOR_NETWORK_CONSTANTS = {

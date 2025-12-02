@@ -160,7 +160,7 @@ function createGameSession(lobbyId: string, players: string[]) {
 
   gameSessions.set(lobbyId, session);
   session.start();
-  console.log(`🎮 Game session started for lobby ${lobbyId}`);
+  console.log(`Game session started for lobby ${lobbyId}`);
 }
 
 function handleGameCommand(clientId: string, command: GameCommand) {
@@ -211,7 +211,7 @@ function handleLeaveLobby(clientId: string) {
     if (session) {
       session.destroy();
       gameSessions.delete(lobbyId);
-      console.log(`🎮 Game session ended for lobby ${lobbyId}`);
+      console.log(`Game session ended for lobby ${lobbyId}`);
     }
   }
 
@@ -223,5 +223,5 @@ const PORT = parseInt(process.env.PORT || '3001', 10);
 const HOST = '0.0.0.0';
 
 server.listen(PORT, HOST, () => {
-  console.log(`🎮 Server listening on http://0.0.0.0:${PORT}`);
+  console.log(`Server listening on http://0.0.0.0:${PORT}`);
 });

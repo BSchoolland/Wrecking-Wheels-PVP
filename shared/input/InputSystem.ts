@@ -40,7 +40,6 @@ class InputRegistryImpl {
       arr.push(binding);
       this.keyToBindings.set(k, arr);
     }
-    console.log(`[InputRegistry] Registered binding: ${binding.id} with keys: ${keys.join(', ')}`);
   }
 
   getById(id: string): BlockInputBinding | undefined {
