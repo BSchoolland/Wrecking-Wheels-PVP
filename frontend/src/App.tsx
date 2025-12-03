@@ -61,6 +61,7 @@ function App() {
   const bgAnimRef = useRef<number | null>(null);
   const selectedRef = useRef<ContraptionSaveData | null>(null);
   const pollIntervalRef = useRef<number | null>(null);
+  const buildAudioRef = useRef<HTMLAudioElement | null>(null);
 
   // Single Play action -> queue join
   const play = async () => {
@@ -190,6 +191,35 @@ function App() {
   useEffect(() => {
     initializeDefaults();
   }, []);
+
+  // Initialize build/test loop audio once
+  useEffect(() => {
+    const audio = new Audio('/audio/build.mp3');
+    audio.loop = true;
+    audio.preload = 'auto';
+    audio.volume = 0.5;
+    buildAudioRef.current = audio;
+    return () => {
+      buildAudioRef.current?.pause();
+      buildAudioRef.current = null;
+    };
+  }, []);
+
+  // Play/pause audio depending on view without restarting between builder/test
+  useEffect(() => {
+    const audio = buildAudioRef.current;
+    if (!audio) return;
+    const shouldPlay = view === 'builder' || view === 'test';
+    if (shouldPlay) {
+      if (audio.paused) {
+        void audio.play().catch(() => {
+          // Autoplay might fail before user interaction; ignore.
+        });
+      }
+    } else {
+      if (!audio.paused) audio.pause();
+    }
+  }, [view]);
 
   useEffect(() => {
     selectedRef.current = selectedContraption;

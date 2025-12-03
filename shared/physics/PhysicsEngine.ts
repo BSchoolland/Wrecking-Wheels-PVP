@@ -232,6 +232,15 @@ export class PhysicsEngine {
             this.effects.spawnExplosionFlash?.(center.x, center.y, BLAST_RADIUS, 200);
           }
         }
+        else if (block.type === 'core' && !explodedBlocks.has(block.id)) {
+          explodedBlocks.add(block.id);
+          const center = body.position;
+          const CORE_EXPLOSION_RADIUS = BUILDER_CONSTANTS.GRID_SIZE * 3;
+
+          if (this.effects) {
+            this.effects.spawnExplosionFlash?.(center.x, center.y, CORE_EXPLOSION_RADIUS, 300);
+          }
+        }
 
         this.bodiesToRemove.add(body);
         const contraptionId = (body as unknown as { contraptionId?: string }).contraptionId;
@@ -250,6 +259,8 @@ export class PhysicsEngine {
         if (contraptionId) affectedContraptions.add(contraptionId);
 
         if (this.effects) {
+          const CORE_EXPLOSION_RADIUS = BUILDER_CONSTANTS.GRID_SIZE * 3;
+          this.effects.spawnExplosionFlash?.(body.position.x, body.position.y, CORE_EXPLOSION_RADIUS, 300);
           this.effects.createGhostBlock?.(body, block);
         }
       }
