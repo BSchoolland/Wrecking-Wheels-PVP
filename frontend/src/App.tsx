@@ -11,6 +11,8 @@ import { ContraptionBuilder } from '@/ui/components/ContraptionBuilder';
 import { ContraptionTester } from '@/ui/components/ContraptionTester';
 import type { ContraptionSaveData } from '@shared/contraptions/Contraption';
 import type { PlayerReadyCommand } from '@shared/types/Commands';
+import type { UIState } from '@shared/types/Commands';
+import type { BlockType } from '@shared/contraptions';
 import './App.css';
 
 const initializeDefaults = async () => {
@@ -39,11 +41,14 @@ const initializeDefaults = async () => {
 };
 
 type View = 'menu' | 'lobby' | 'game' | 'builder' | 'test';
+type GameMode = 'normal' | 'build';
 
 type QueueJoinResponse = { success: boolean; lobbyId: string; role: 'host' | 'client'; status: 'waiting' | 'ready'; players?: string[] };
 
 function App() {
   const [view, setView] = useState<View>('menu');
+  const [showModeSelector, setShowModeSelector] = useState<boolean>(false);
+  const [selectedMode, setSelectedMode] = useState<GameMode>('normal');
   const [playerIndex, setPlayerIndex] = useState<number>(0); // 0 = first player, 1 = second
   const [lobbyId, setLobbyId] = useState('');
   const [playerId] = useState(`player-${Date.now()}`);
@@ -52,6 +57,8 @@ function App() {
   const [isWaiting, setIsWaiting] = useState(false);
   const [contraptionToTest, setContraptionToTest] = useState<ContraptionSaveData | null>(null);
   const [gameWinState, setGameWinState] = useState<'win' | 'loss' | null>(null);
+  const [latestUIState, setLatestUIState] = useState<UIState | null>(null);
+  const latestBlueprintRef = useRef<ContraptionSaveData | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const bgCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -63,14 +70,20 @@ function App() {
   const pollIntervalRef = useRef<number | null>(null);
   const buildAudioRef = useRef<HTMLAudioElement | null>(null);
 
-  // Single Play action -> queue join
-  const play = async () => {
+  // Open mode selector from Play
+  const play = () => {
+    setShowModeSelector(true);
+  };
+
+  // Join queue with the selected mode
+  const joinQueue = async (mode: GameMode) => {
     try {
       setIsWaiting(true);
+      setShowModeSelector(false);
       const res = await fetch('/api/matchmaking/queue/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ playerId }),
+        body: JSON.stringify({ playerId, mode }),
       });
       if (!res.ok) {
         const text = await res.text().catch(() => '');
@@ -127,6 +140,7 @@ function App() {
               playerId,
               playerIndex: pIndex,
               contraption: selectedContraption || undefined,
+              onUIUpdate: (ui) => setLatestUIState(ui),
               onReturnToMenu: () => {
                 gameRef.current?.destroy();
                 gameRef.current = null;
@@ -188,6 +202,12 @@ function App() {
     if (pollIntervalRef.current) { window.clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
   };
 
+  // Derived helpers for build phase UI
+  const isBuildPhase = latestUIState?.phase === 'build';
+  const myInventory: Partial<Record<BlockType, number>> | undefined = (latestUIState?.inventory?.[playerId] as unknown as Partial<Record<BlockType, number>>) || undefined;
+  const opponentIndex = playerIndex === 0 ? 1 : 0;
+  const isOpponentReady = Boolean(latestUIState?.ready ? latestUIState?.ready[opponentIndex] : false);
+
   useEffect(() => {
     initializeDefaults();
   }, []);
@@ -234,6 +254,7 @@ function App() {
         playerId,
         playerIndex,
         contraption: selectedContraption || undefined,
+        onUIUpdate: (ui) => setLatestUIState(ui),
       });
       gameRef.current.start();
     }
@@ -312,6 +333,13 @@ function App() {
     }
   }, [view]);
 
+  // When server transitions to battle phase, show the game view
+  useEffect(() => {
+    if (latestUIState?.phase === 'battle' && view !== 'game') {
+      setView('game');
+    }
+  }, [latestUIState?.phase, view]);
+
   useEffect(() => {
     return () => {
       if (pollIntervalRef.current) window.clearInterval(pollIntervalRef.current);
@@ -381,6 +409,66 @@ function App() {
             </div>
           )}
 
+          {/* Mode selector modal */}
+          {showModeSelector && view === 'menu' && (
+            <div style={{
+              position: 'fixed',
+              inset: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'rgba(0,0,0,0.45)',
+              zIndex: 20,
+            }}>
+              <div style={{
+                background: 'linear-gradient(180deg, var(--plate-800), var(--plate-900))',
+                border: '1px solid rgba(0,0,0,0.6)',
+                borderRadius: 12,
+                padding: 24,
+                minWidth: 360,
+                boxShadow: '0 20px 35px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05)',
+              }}>
+                <h2 style={{ marginTop: 0, marginBottom: 16, color: 'var(--accent-300)' }}>Select Mode</h2>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 16 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#e8e8e8' }}>
+                    <input
+                      type="radio"
+                      name="mode"
+                      checked={selectedMode === 'normal'}
+                      onChange={() => setSelectedMode('normal')}
+                    />
+                    Normal Mode
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', color: '#e8e8e8' }}>
+                    <input
+                      type="radio"
+                      name="mode"
+                      checked={selectedMode === 'build'}
+                      onChange={() => setSelectedMode('build')}
+                    />
+                    Build Mode (2-minute build, then fight)
+                  </label>
+                </div>
+                <div style={{ display: 'flex', gap: 12, justifyContent: 'flex-end' }}>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => setShowModeSelector(false)}
+                    disabled={isWaiting}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => { void joinQueue(selectedMode); }}
+                    disabled={isWaiting}
+                  >
+                    Continue
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {view === 'builder' && (
             <ContraptionBuilder onBack={() => setView('menu')} onTestStart={(data) => { setContraptionToTest(data); setView('test'); }} />
           )}
@@ -392,41 +480,81 @@ function App() {
           {view === 'lobby' && (
             <div className="lobby">
               <p className="info">
-                {isWaiting ? 'Waiting for another player to join…' : 'Matched!  Waiting for both players to be ready...'}
+                {isWaiting ? 'Waiting for another player to join…' : (latestUIState?.phase === 'build' ? 'Build Mode: Assemble your contraption!' : 'Matched!  Waiting for both players to be ready...')}
               </p>
 
-              <div className="contraption-selection">
-                <h3>Select Your Contraption</h3>
-                <div className="contraption-list">
-                  {(() => {
-                    const items: ContraptionSaveData[] = [];
-                    for (let i = 0; i < localStorage.length; i++) {
-                      const key = localStorage.key(i);
-                      if (!key || !key.startsWith('contraption-')) continue;
-                      const raw = localStorage.getItem(key);
-                      if (!raw) continue;
-                      try { items.push(JSON.parse(raw)); } catch { /* ignore parse errors */ }
-                    }
-                    if (items.length === 0) return <p className="no-contraptions">No saved contraptions. Create one in the builder.</p>;
-                    return items.map((data) => (
-                      <div 
-                        key={data.id} 
-                        className={`contraption-item ${selectedContraption?.id === data.id ? 'selected' : ''}`}
-                        onClick={() => setSelectedContraption(data)}
+              {isBuildPhase ? (
+                <>
+                  <ContraptionBuilder
+                    onBack={() => { setView('menu'); }}
+                    onTestStart={(data) => { setContraptionToTest(data); setView('test'); }}
+                    inventory={myInventory}
+                    onChange={(data) => {
+                      latestBlueprintRef.current = data;
+                      gameRef.current?.sendBuildReady(data);
+                    }}
+                  />
+                  {/* Overlay HUD for countdown and actions */}
+                  <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 30 }}>
+                    <div style={{ position: 'absolute', top: 16, left: '50%', transform: 'translateX(-50%)', color: '#e8e8e8', fontSize: '1.25rem', fontWeight: 700 }}>
+                      Time left: {latestUIState.timerSeconds ?? 0}s
+                    </div>
+                    <div style={{ position: 'absolute', bottom: 20, right: 20 }}>
+                      <button
+                        className="btn btn-primary"
+                        style={{ pointerEvents: 'auto' }}
+                        onClick={() => gameRef.current?.sendBuildLock(latestBlueprintRef.current)}
                       >
-                        <div className="contraption-name">{data.name}</div>
-                        <div className="contraption-info">{data.blocks?.length || 0} blocks{data.vehicleClass ? ` • ${data.vehicleClass}` : ''}</div>
-                      </div>
-                    ));
-                  })()}
+                        Ready to Battle
+                      </button>
+                    </div>
+                    <div style={{ position: 'absolute', bottom: 20, left: 20, color: '#cfcfcf', fontSize: '0.95rem', pointerEvents: 'none' }}>
+                      Opponent ready: {isOpponentReady ? 'Yes' : 'No'}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="contraption-selection">
+                  <h3>Select Your Contraption</h3>
+                  <div className="contraption-list">
+                    {(() => {
+                      const items: ContraptionSaveData[] = [];
+                      for (let i = 0; i < localStorage.length; i++) {
+                        const key = localStorage.key(i);
+                        if (!key || !key.startsWith('contraption-')) continue;
+                        const raw = localStorage.getItem(key);
+                        if (!raw) continue;
+                        try { items.push(JSON.parse(raw)); } catch { /* ignore parse errors */ }
+                      }
+                      if (items.length === 0) return <p className="no-contraptions">No saved contraptions. Create one in the builder.</p>;
+                      return items.map((data) => (
+                        <div 
+                          key={data.id} 
+                          className={`contraption-item ${selectedContraption?.id === data.id ? 'selected' : ''}`}
+                          onClick={() => setSelectedContraption(data)}
+                        >
+                          <div className="contraption-name">{data.name}</div>
+                          <div className="contraption-info">{data.blocks?.length || 0} blocks{data.vehicleClass ? ` • ${data.vehicleClass}` : ''}</div>
+                        </div>
+                      ));
+                    })()}
+                  </div>
                 </div>
-              </div>
+              )}
 
               <div className="lobby-actions">
-                <button className="btn btn-primary" onClick={startGame} disabled={!selectedContraption || isWaiting}>Ready</button>
-                <button className="btn btn-secondary" onClick={() => { setView('menu'); setLobbyId(''); setIsWaiting(false); if (pollIntervalRef.current) { window.clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; } void leaveQueueIfWaiting(); }}>
-                  Back to Menu
-                </button>
+                {latestUIState?.phase === 'build' ? (
+                  <button className="btn btn-secondary" onClick={() => { setView('menu'); setLobbyId(''); setIsWaiting(false); if (pollIntervalRef.current) { window.clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; } void leaveQueueIfWaiting(); }}>
+                    Back to Menu
+                  </button>
+                ) : (
+                  <>
+                    <button className="btn btn-primary" onClick={startGame} disabled={!selectedContraption || isWaiting}>Ready</button>
+                    <button className="btn btn-secondary" onClick={() => { setView('menu'); setLobbyId(''); setIsWaiting(false); if (pollIntervalRef.current) { window.clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; } void leaveQueueIfWaiting(); }}>
+                      Back to Menu
+                    </button>
+                  </>
+                )}
               </div>
             </div>
           )}

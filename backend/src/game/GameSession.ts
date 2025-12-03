@@ -12,6 +12,9 @@ import type { GameCommand, ContraptionData, UIState, GameEvent, BlockInputComman
 import type { BlockData } from '@shared/contraptions/blocks/BaseBlock';
 import { BaseBlock } from '@shared/contraptions/blocks/BaseBlock';
 import { ServerEffectQueue, type EffectEvent } from './ServerEffectQueue';
+import { GAME_CONSTANTS } from '@shared/constants/game';
+import type { BuildLockCommand, BuildReadyCommand } from '@shared/types/Commands';
+import { BLOCK_REGISTRY, type BlockType } from '@shared/contraptions';
 
 // Extended Matter.js types
 interface ExtendedBody extends Matter.Body {
@@ -79,6 +82,7 @@ export class GameSession {
   private physics: PhysicsEngine;
   private callbacks: GameSessionCallbacks;
   private effectQueue: ServerEffectQueue;
+  private mode: 'normal' | 'build' = 'normal';
   
   private isRunning = false;
   private gameLoopInterval: ReturnType<typeof setInterval> | null = null;
@@ -103,12 +107,20 @@ export class GameSession {
   
   // Win state
   private winState: { winner: string; loser: string } | null = null;
+
+  // Build Mode state
+  private phase: 'lobby' | 'build' | 'battle' = 'lobby';
+  private buildPhaseEndsAt: number = 0;
+  private inventories: Map<string, Record<BlockType, number>> = new Map();
+  private buildLockedBlueprints: Map<string, ContraptionData> = new Map();
+  private buildLatestBlueprints: Map<string, ContraptionData> = new Map();
   
 
-  constructor(lobbyId: string, players: string[], callbacks: GameSessionCallbacks) {
+  constructor(lobbyId: string, players: string[], callbacks: GameSessionCallbacks, mode?: 'normal' | 'build') {
     this.lobbyId = lobbyId;
     this.players = players;
     this.callbacks = callbacks;
+    if (mode) this.mode = mode;
     
     this.physics = new PhysicsEngine({ isServer: true });
     this.effectQueue = new ServerEffectQueue();
@@ -119,9 +131,14 @@ export class GameSession {
     if (this.isRunning) return;
     this.isRunning = true;
     
-    // Ensure physics is NOT running at session start; stay frozen until countdown completes
+    // Ensure physics is NOT running at session start; stay frozen until countdown completes or until battle phase in Build Mode
     this.physics.stop();
     this.callbacks.onEvent({ type: 'freeze' });
+    if (this.mode === 'build') {
+      this.beginBuildPhase();
+    } else {
+      this.phase = 'battle';
+    }
     
     // Start game loop at 60Hz
     this.gameLoopInterval = setInterval(() => this.gameLoop(), 1000 / 60);
@@ -146,6 +163,27 @@ export class GameSession {
 
   handleCommand(command: GameCommand): void {
     switch (command.type) {
+      case 'build-ready': {
+        if (this.mode !== 'build' || this.phase !== 'build') break;
+        const c = command as BuildReadyCommand;
+        // Store latest valid blueprint preview; do NOT force ready by default
+        if (c.contraption && this.validateBlueprintAgainstInventory(c.playerId, c.contraption)) {
+          this.buildLatestBlueprints.set(c.playerId, c.contraption);
+        }
+        break;
+      }
+      case 'build-lock': {
+        if (this.mode !== 'build' || this.phase !== 'build') break;
+        const c = command as BuildLockCommand;
+        if (this.validateBlueprintAgainstInventory(c.playerId, c.contraption)) {
+          this.buildLockedBlueprints.set(c.playerId, c.contraption);
+          this.buildLatestBlueprints.set(c.playerId, c.contraption);
+          this.readyStates.set(c.playerId, true);
+        } else {
+          // If invalid, keep player unready; could auto-fix, but we wait for timeout
+        }
+        break;
+      }
       case 'player-init':
         // Legacy - spawn client's contraption if provided
         if (command.contraption) {
@@ -263,6 +301,15 @@ export class GameSession {
 
     // Increment tick
     this.snapshotTick++;
+
+    // Build Mode: check for build phase expiry or both ready
+    if (this.mode === 'build' && this.phase === 'build') {
+      const timeLeft = Math.max(0, Math.ceil((this.buildPhaseEndsAt - now) / 1000));
+      const bothReady = this.players.length >= 2 && this.players.every(p => this.readyStates.get(p) === true);
+      if (bothReady || now >= this.buildPhaseEndsAt) {
+        this.transitionToBattleFromBuild();
+      }
+    }
 
     // Send physics state at sync interval
     if (now - this.lastSyncTime >= this.syncInterval) {
@@ -464,7 +511,21 @@ export class GameSession {
   }
 
   private serializeUIState(): UIState {
-    return { resources: {}, cooldowns: {} };
+    const ui: UIState = { resources: {}, cooldowns: {} };
+    if (this.mode === 'build') {
+      ui.phase = this.phase;
+      if (this.phase === 'build') {
+        ui.timerSeconds = Math.max(0, Math.ceil((this.buildPhaseEndsAt - Date.now()) / 1000));
+        ui.ready = [Boolean(this.readyStates.get(this.players[0])), Boolean(this.readyStates.get(this.players[1]))];
+        const inv: { [pid: string]: { [t: string]: number } } = {};
+        this.players.forEach(pid => {
+          const map = this.inventories.get(pid) || {} as Record<BlockType, number>;
+          inv[pid] = { ...map };
+        });
+        ui.inventory = inv;
+      }
+    }
+    return ui;
   }
 
   private checkWinCondition(): void {
@@ -503,5 +564,91 @@ export class GameSession {
   getWinState(): { winner: string; loser: string } | null {
     return this.winState;
   }
+
+  // ----- Build Mode helpers -----
+  private beginBuildPhase(): void {
+    this.phase = 'build';
+    // Generate inventories per player
+    // Both players receive the exact same randomized resources (independent copies)
+    const baseInventory = this.generateInventory();
+    const clone = (src: Record<BlockType, number>) => {
+      const dst = {} as Record<BlockType, number>;
+      (Object.keys(src) as BlockType[]).forEach(k => { dst[k] = src[k]; });
+      return dst;
+    };
+    this.players.forEach(pid => {
+      this.inventories.set(pid, clone(baseInventory));
+      this.readyStates.set(pid, false);
+    });
+    this.buildPhaseEndsAt = Date.now() + GAME_CONSTANTS.BUILD_PHASE_SECONDS * 1000;
+  }
+
+  private transitionToBattleFromBuild(): void {
+    // Build contraptions from locked blueprints or the latest submitted preview
+    this.players.forEach((pid, index) => {
+      const blueprint = this.buildLockedBlueprints.get(pid) || this.buildLatestBlueprints.get(pid);
+      if (blueprint) {
+        const x = index === 0 ? WORLD_BOUNDS.WIDTH * 0.15 : WORLD_BOUNDS.WIDTH * 0.85;
+        const y = 200;
+        this.spawnContraption(x, y, pid, blueprint);
+      }
+    });
+    this.phase = 'battle';
+    // Start countdown then unfreeze
+    if (!this.countdownActive) {
+      this.startCountdown();
+      this.callbacks.onEvent({ type: 'countdown-start' });
+    }
+  }
+
+  private generateInventory(): Record<BlockType, number> {
+    // Guaranteed
+    const inv: Record<BlockType, number> = {
+      core: 1,
+      simple: 3,
+      wheel: 2,
+      spike: 1,
+      gray: 0,
+      tnt: 0,
+      rocket: 0,
+      hinge: 0,
+    };
+    // Weighted random extras
+    const weights = GAME_CONSTANTS.BUILD_MODE_BLOCK_WEIGHTS as Record<string, number>;
+    const extraCount = Math.floor(Math.random() * (GAME_CONSTANTS.EXTRA_PARTS_MAX - GAME_CONSTANTS.EXTRA_PARTS_MIN + 1)) + GAME_CONSTANTS.EXTRA_PARTS_MIN;
+    const pool: Array<BlockType> = Object.keys(BLOCK_REGISTRY) as BlockType[];
+    const totalWeight = pool.reduce((sum, t) => sum + (weights[t] ?? 0), 0);
+    for (let i = 0; i < extraCount; i++) {
+      let r = Math.random() * totalWeight;
+      for (const t of pool) {
+        const w = weights[t] ?? 0;
+        if (w <= 0) continue;
+        if ((r -= w) <= 0) {
+          inv[t] = (inv[t] ?? 0) + 1;
+          break;
+        }
+      }
+    }
+    return inv;
+  }
+
+  private validateBlueprintAgainstInventory(playerId: string, blueprint: ContraptionData): boolean {
+    const inv = this.inventories.get(playerId);
+    if (!inv) return false;
+    const used: Record<string, number> = {};
+    let coreCount = 0;
+    for (const b of blueprint.blocks) {
+      const t = b.type;
+      used[t] = (used[t] ?? 0) + 1;
+      if (t === 'core') coreCount++;
+    }
+    if (coreCount !== 1) return false;
+    for (const t in used) {
+      if ((used[t] || 0) > (inv[t as BlockType] || 0)) return false;
+    }
+    return true;
+  }
+
+  // Note: No auto-build fallback. On timeout, we spawn the last valid submitted blueprint if any.
 }
 

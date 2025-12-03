@@ -17,6 +17,10 @@ import './ContraptionBuilder.css';
 interface ContraptionBuilderProps {
   onBack: () => void;
   onTestStart: (contraption: ContraptionSaveData) => void;
+  // Optional constrained inventory: when provided, limit placements by counts
+  inventory?: Partial<Record<BlockType, number>>;
+  // Optional: notify parent when contraption changes (for build-ready streaming)
+  onChange?: (contraption: ContraptionSaveData) => void;
 }
 
 const VEHICLE_CLASS_CONFIG: Record<VehicleClass, { energyLimit: number; gridSize: number }> = {
@@ -25,7 +29,9 @@ const VEHICLE_CLASS_CONFIG: Record<VehicleClass, { energyLimit: number; gridSize
   heavy: { energyLimit: 20, gridSize: 16 },
 };
 
-export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderProps) {
+export function ContraptionBuilder({ onBack, onTestStart, inventory, onChange }: ContraptionBuilderProps) {
+  // Build Mode is active when a constrained inventory is provided
+  const isBuildMode = Boolean(inventory);
   const [selectedClass, setSelectedClass] = useState<VehicleClass>('medium');
   const [contraption, setContraption] = useState(() => new Contraption('', 'Unnamed Contraption', 1, 'default', false, 'medium'));
   const [selectedBlock, setSelectedBlock] = useState<BlockType>('core');
@@ -52,6 +58,8 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
   const getGridSize = () => VEHICLE_CLASS_CONFIG[selectedClass].gridSize;
   const getEnergyLimit = () => VEHICLE_CLASS_CONFIG[selectedClass].energyLimit;
   const getCurrentEnergy = () => {
+    // In build mode, energy is ignored
+    if (isBuildMode) return 0;
     return contraption.getAllBlocks().reduce((sum, b) => sum + b.energyCost, 0);
   };
 
@@ -83,6 +91,17 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
   };
 
   const getBlockAt = (gx: number, gy: number) => contraption.getAllBlocks().find(b => b.gridX === gx && b.gridY === gy);
+  const placedCountsByType = (): Record<BlockType, number> => {
+    const counts = {} as Record<BlockType, number>;
+    (BLOCKS_ORDER as BlockType[]).forEach(t => { counts[t] = 0; });
+    contraption.getAllBlocks().forEach(b => { counts[b.type as BlockType] = (counts[b.type as BlockType] || 0) + 1; });
+    return counts;
+  };
+  const remainingForType = (type: BlockType): number | null => {
+    if (!isBuildMode || inventory?.[type] === undefined) return null;
+    const placed = placedCountsByType()[type] || 0;
+    return Math.max(0, (inventory[type] as number) - placed);
+  };
 
   const clearSelection = () => {
     setSelectedCell(null);
@@ -166,6 +185,17 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
     handleGridAction(e, canvas, mouseButton);
   };
 
+  const canPlaceBlock = (type: BlockType, gridX: number, gridY: number): boolean => {
+    if (type === 'core' && contraption.hasCore()) return false;
+    const remaining = remainingForType(type);
+    if (remaining !== null && remaining <= 0) return false;
+    if (!isBuildMode) {
+      const block = createBlock(type, gridX, gridY);
+      if (getCurrentEnergy() + block.energyCost > getEnergyLimit()) return false;
+    }
+    return true;
+  };
+
   const handleGridAction = (e: React.MouseEvent<HTMLCanvasElement>, canvas: HTMLCanvasElement, button?: 'left' | 'right') => {
     const usedButton = button ?? mouseButton;
     if (!usedButton) return;
@@ -177,17 +207,8 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
 
     if (usedButton === 'left') {
       if (suppressPlacementThisClickRef.current) return;
-      // Place block
-      if (selectedBlock === 'core' && contraption.hasCore()) {
-        return;
-      }
-      // Check energy limit before placing
+      if (!canPlaceBlock(selectedBlock, gridX, gridY)) return;
       const block = createBlock(selectedBlock, gridX, gridY);
-      const currentEnergy = getCurrentEnergy();
-      const energyLimit = getEnergyLimit();
-      if (currentEnergy + block.energyCost > energyLimit) {
-        return; // Exceeds energy limit
-      }
       if (contraption.addBlock(block)) {
         const newContraption = new Contraption(contraption.id, contraption.name, contraption.direction, contraption.team, contraption.isBot, contraption.vehicleClass);
         contraption.getAllBlocks().forEach(b => newContraption.addBlock(b));
@@ -482,6 +503,18 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
     }
   }, [contraption, selectedBlock, selectedCell, selectedClass]);
 
+  // Notify parent of contraption changes (throttled lightly by React batching)
+  useEffect(() => {
+    if (onChange) {
+      try {
+        const saved = contraption.save();
+        onChange(saved);
+      } catch {
+        // ignore
+      }
+    }
+  }, [contraption, onChange]);
+
   // Map each block type to a sprite row/size from the blocks spritesheet
   const getIconSpriteConfig = (type: BlockType): { row: number; column?: number; width?: number; height?: number } => {
     switch (type) {
@@ -582,6 +615,8 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
   }, [contraption, selectedBlock]);
 
   const getBlockCount = (type: BlockType): number => {
+    const remaining = remainingForType(type);
+    if (remaining !== null) return remaining;
     return contraption.getAllBlocks().filter(b => b.type === type).length;
   };
 
@@ -602,6 +637,7 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
           <button onClick={onBack}>Back to Menu</button>
         </div>
         
+        {!isBuildMode && (
         <div className="class-selector" style={{ 
           position: 'absolute', 
           top: '12px', 
@@ -644,16 +680,19 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
             );
           })}
         </div>
+        )}
         
-        <div className="energy-display">
-          Energy: {getCurrentEnergy().toFixed(2)} / {getEnergyLimit()}
-        </div>
+        {!isBuildMode && (
+          <div className="energy-display">
+            Energy: {getCurrentEnergy().toFixed(2)} / {getEnergyLimit()}
+          </div>
+        )}
         
         {/* Bottom hotbar */}
         <div className="builder-hotbar">
           {BLOCKS_ORDER.map((type) => {
             const meta = BLOCK_METADATA[type];
-            const disabled = type === 'core' && isCoreDisabled;
+            const disabled = (type === 'core' && isCoreDisabled) || (remainingForType(type) !== null && (remainingForType(type) as number) <= 0);
             const isActive = selectedBlock === type;
             const count = getBlockCount(type);
             const icon = iconUrls[type];
@@ -678,10 +717,14 @@ export function ContraptionBuilder({ onBack, onTestStart }: ContraptionBuilderPr
         </div>
         
         <div className="builder-actions">
-          <button onClick={testContraption}>Test Contraption</button>
-          <button onClick={saveContraption}>Save</button>
-          <button onClick={() => setShowLoadModal(true)}>Load</button>
-          <button onClick={exportContraption}>Export JSON</button>
+          {!isBuildMode && (
+            <>
+              <button onClick={testContraption}>Test Contraption</button>
+              <button onClick={saveContraption}>Save</button>
+              <button onClick={() => setShowLoadModal(true)}>Load</button>
+              <button onClick={exportContraption}>Export JSON</button>
+            </>
+          )}
         </div>
 
         {selectionMenuPos && (

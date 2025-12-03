@@ -90,6 +90,7 @@ interface NetworkedGameConfig {
   contraption?: ContraptionSaveData;
   onContraptionSpawned?: () => void;
   onReturnToMenu?: () => void;
+  onUIUpdate?: (ui: UIState) => void;
 }
 
 export class NetworkedGame {
@@ -102,6 +103,7 @@ export class NetworkedGame {
   private network: NetworkManager;
   private onContraptionSpawned?: () => void;
   private onReturnToMenu?: () => void;
+  private onUIUpdateCb?: (ui: UIState) => void;
   private savedContraption: ContraptionSaveData | null = null;
   
   private isRunning = false;
@@ -170,6 +172,7 @@ export class NetworkedGame {
     this.savedContraption = config.contraption || null;
     this.onContraptionSpawned = config.onContraptionSpawned;
     this.onReturnToMenu = config.onReturnToMenu;
+    this.onUIUpdateCb = config.onUIUpdate;
     
     this.energy = 0;
     
@@ -509,8 +512,10 @@ export class NetworkedGame {
   /**
    * Handle UI update from server - UI Channel
    */
-  private handleUIUpdate(_uiState: UIState): void {
-    // No resources/cooldowns
+  private handleUIUpdate(uiState: UIState): void {
+    if (this.onUIUpdateCb) {
+      this.onUIUpdateCb(uiState);
+    }
   }
 
   /**
@@ -725,6 +730,23 @@ export class NetworkedGame {
 
   sendReadyCommand(cmd: PlayerReadyCommand): void {
     this.network.sendCommand(cmd as unknown as GameCommand);
+  }
+  
+  sendBuildReady(contraption?: ContraptionSaveData | null): void {
+    const payload = contraption ? { ...contraption } : undefined;
+    const cmd = { type: 'build-ready', playerId: this.playerId, contraption: payload } as unknown as GameCommand;
+    this.network.sendCommand(cmd);
+  }
+  
+  sendBuildLock(contraption?: ContraptionSaveData | null): void {
+    const finalContraption = contraption ? { ...contraption } : {
+      id: 'empty',
+      name: 'Empty',
+      blocks: [],
+      vehicleClass: 'medium' as const
+    };
+    const cmd = { type: 'build-lock', playerId: this.playerId, contraption: finalContraption } as unknown as GameCommand;
+    this.network.sendCommand(cmd);
   }
 
   getPlayerResources(_playerId: string): { energy: number } | null { return null; }

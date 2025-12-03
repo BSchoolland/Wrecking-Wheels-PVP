@@ -18,10 +18,12 @@ interface Lobby {
   maxPlayers: number;
   status: 'waiting' | 'ready' | 'in-progress' | 'completed';
   createdAt: number;
+  mode?: 'normal' | 'build';
 }
 
 const lobbies = new Map<string, Lobby>();
 const lobbyPlayerOrder = new Map<string, string[]>(); // Correct player order (first joiner, second joiner)
+const lobbyModes = new Map<string, 'normal' | 'build'>();
 
 /**
  * Create a new lobby
@@ -168,10 +170,11 @@ router.post('/lobby/leave', (req: Request, res: Response) => {
 let waitingLobbyId: string | undefined; // lobby waiting for a second player
 
 router.post('/queue/join', (req: Request, res: Response) => {
-  const { playerId } = (req.body ?? {}) as { playerId?: string };
+  const { playerId, mode } = (req.body ?? {}) as { playerId?: string; mode?: 'normal' | 'build' };
   if (!playerId) {
     return res.status(400).json({ error: 'playerId is required' });
   }
+  const selectedMode: 'normal' | 'build' = mode === 'build' ? 'build' : 'normal';
 
   // If no waiting lobby, create one and assign as host
   if (!waitingLobbyId) {
@@ -183,9 +186,11 @@ router.post('/queue/join', (req: Request, res: Response) => {
       maxPlayers: 2,
       status: 'waiting',
       createdAt: Date.now(),
+      mode: selectedMode,
     };
     lobbies.set(lobbyId, lobby);
     waitingLobbyId = lobbyId;
+    lobbyModes.set(lobbyId, selectedMode);
     return res.json({ success: true, lobbyId, role: 'host', status: 'waiting' });
   }
 
@@ -202,9 +207,11 @@ router.post('/queue/join', (req: Request, res: Response) => {
       maxPlayers: 2,
       status: 'waiting',
       createdAt: Date.now(),
+      mode: selectedMode,
     };
     lobbies.set(lobbyId, newLobby);
     waitingLobbyId = lobbyId;
+    lobbyModes.set(lobbyId, selectedMode);
     return res.json({ success: true, lobbyId, role: 'host', status: 'waiting' });
   }
 
@@ -219,9 +226,11 @@ router.post('/queue/join', (req: Request, res: Response) => {
       maxPlayers: 2,
       status: 'waiting',
       createdAt: Date.now(),
+      mode: selectedMode,
     };
     lobbies.set(lobbyId, newLobby);
     waitingLobbyId = lobbyId;
+    lobbyModes.set(lobbyId, selectedMode);
     return res.json({ success: true, lobbyId, role: 'host', status: 'waiting' });
   }
 
@@ -263,4 +272,5 @@ router.post('/queue/leave', (req: Request, res: Response) => {
 });
 
 export { lobbyPlayerOrder };
+export { lobbyModes };
 export default router;

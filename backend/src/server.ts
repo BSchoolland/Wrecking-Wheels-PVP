@@ -33,6 +33,7 @@ const apiExt = process.env.NODE_ENV === 'production' ? '.js' : '.ts';
 const matchmakingModule = await import(`./api/matchmaking${apiExt}`);
 app.use('/api/matchmaking', matchmakingModule.default);
 const lobbyPlayerOrderFromMatchmaking = matchmakingModule.lobbyPlayerOrder;
+const lobbyModesFromMatchmaking = matchmakingModule.lobbyModes;
 
 // Serve built frontend in production from the project's frontend/dist
 if (process.env.NODE_ENV === 'production') {
@@ -146,6 +147,7 @@ function handleJoinLobby(clientId: string, lobbyId: string, playerId: string) {
 function createGameSession(lobbyId: string, players: string[]) {
   if (gameSessions.has(lobbyId)) return;
 
+  const mode: 'normal' | 'build' = lobbyModesFromMatchmaking.get(lobbyId) || 'normal';
   const session = new GameSession(lobbyId, players, {
     onStateUpdate: (state: NetworkSnapshot) => {
       broadcastToLobby(lobbyId, { type: 'state', payload: state });
@@ -156,7 +158,7 @@ function createGameSession(lobbyId: string, players: string[]) {
     onEvent: (event: GameEvent) => {
       broadcastToLobby(lobbyId, { type: 'event', payload: event });
     },
-  });
+  }, mode);
 
   gameSessions.set(lobbyId, session);
   session.start();

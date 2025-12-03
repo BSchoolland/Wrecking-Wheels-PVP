@@ -27,7 +27,9 @@ export type GameCommand =
   | SpawnBoxCommand
   | PlayerInitCommand
   | BlockInputCommand
-  | PlayerReadyCommand;
+  | PlayerReadyCommand
+  | BuildReadyCommand
+  | BuildLockCommand;
 
 export interface DeployCommand {
   type: 'deploy';
@@ -69,12 +71,30 @@ export interface PlayerReadyCommand {
   contraption?: ContraptionData;
 }
 
+export interface BuildReadyCommand {
+  type: 'build-ready';
+  playerId: string;
+  contraption?: ContraptionData; // optional interim blueprint preview
+}
+
+export interface BuildLockCommand {
+  type: 'build-lock';
+  playerId: string;
+  contraption: ContraptionData; // final submitted blueprint
+}
+
 /**
  * UI State Update (host -> client, 5-10Hz, reliable)
  */
 export interface UIState {
   resources: { [playerId: string]: { energy: number } };
   cooldowns: { [playerId: string]: number }; // timestamp when cooldown ends
+  // Build Mode extras (only present in Build Mode)
+  phase?: 'lobby' | 'build' | 'battle';
+  timerSeconds?: number;
+  ready?: [boolean, boolean];
+  // Per-player inventory; keys are BlockType strings; values are counts
+  inventory?: { [playerId: string]: { [blockType: string]: number } };
 }
 
 /**
