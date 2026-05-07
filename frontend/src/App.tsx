@@ -107,11 +107,7 @@ function App() {
             playerId,
             playerIndex: data.role === 'host' ? 0 : 1,
             contraption: selectedContraption || undefined,
-            onReturnToMenu: () => {
-              gameRef.current?.destroy();
-              gameRef.current = null;
-              setView('menu');
-            },
+            onReturnToMenu: stopGame,
           });
           gameRef.current.start();
         }
@@ -141,11 +137,7 @@ function App() {
               playerIndex: pIndex,
               contraption: selectedContraption || undefined,
               onUIUpdate: (ui) => setLatestUIState(ui),
-              onReturnToMenu: () => {
-                gameRef.current?.destroy();
-                gameRef.current = null;
-                setView('menu');
-              },
+              onReturnToMenu: stopGame,
             });
             gameRef.current.start();
           }
@@ -199,6 +191,8 @@ function App() {
     setView('menu');
     setLobbyId('');
     setIsWaiting(false);
+    setGameWinState(null);
+    setLatestUIState(null);
     if (pollIntervalRef.current) { window.clearInterval(pollIntervalRef.current); pollIntervalRef.current = null; }
   };
 
@@ -282,11 +276,7 @@ function App() {
           playerId,
           playerIndex,
           contraption: selectedContraption,
-          onReturnToMenu: () => {
-            gameRef.current?.destroy();
-            gameRef.current = null;
-            setView('menu');
-          },
+          onReturnToMenu: stopGame,
         });
         gameRef.current.start();
       }
@@ -385,18 +375,22 @@ function App() {
           zIndex: 10,
           pointerEvents: 'none'
         }}>
-          <button
-            className="btn btn-primary"
-            onClick={() => {
-              gameRef.current?.destroy();
-              gameRef.current = null;
-              setGameWinState(null);
-              setView('menu');
-            }}
-            style={{ pointerEvents: 'auto', marginTop: '80px' }}
-          >
-            Return to Menu
-          </button>
+          <div style={{ display: 'flex', gap: 12, marginTop: '80px' }}>
+            <button
+              className="btn btn-primary"
+              onClick={() => { stopGame(); void joinQueue(selectedMode); }}
+              style={{ pointerEvents: 'auto' }}
+            >
+              Play Again
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={stopGame}
+              style={{ pointerEvents: 'auto' }}
+            >
+              Return to Menu
+            </button>
+          </div>
         </div>
       )}
       {view !== 'game' && (
